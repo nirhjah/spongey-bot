@@ -1,0 +1,27 @@
+plugins {
+    id 'java'
+}
+
+group 'org.example'
+version '1.0-SNAPSHOT'
+
+repositories {
+    mavenCentral()
+}
+
+task run(type: JavaExec, dependsOn: 'classes') {
+    main = 'SpongeyBot'
+    classpath = sourceSets.main.runtimeClasspath
+}
+
+dependencies {
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.8.1'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.8.1'
+
+    implementation "com.discord4j:discord4j-core:3.2.6"
+    implementation 'org.apache.httpcomponents:httpclient:4.5.13' // Check for the latest version
+
+
+
+}
+
