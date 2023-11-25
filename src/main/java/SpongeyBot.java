@@ -90,6 +90,24 @@ public class SpongeyBot {
         return rootNode;
     }
 
+
+    static Mono<?> helpCommand(Message message) {
+
+        EmbedCreateSpec.Builder embedBuilder = createEmbed("Help")
+                .addField("", "$wkt", false)
+                .addField("", "$wk", false)
+                .addField("", "$toptracks", false)
+                .addField("", "$topartists", false)
+                .addField("", "$a", false)
+                .addField("", "$scrobblelb", false)
+                .addField("", "$login", false)
+                .addField("", "more features coming soon", false);
+
+        return message.getChannel().flatMap(channel -> channel.createMessage(embedBuilder.build()));
+
+
+    }
+
     static Mono<?> scrobbleLbCommand(Message message, ObjectMapper objectMapper, CloseableHttpClient httpClient, GatewayDiscordClient client) {
 
         EmbedCreateSpec.Builder embedBuilder = createEmbed("Scrobble leaderboard");
@@ -160,12 +178,8 @@ public class SpongeyBot {
         for (Map.Entry<Long, String> entry : SessionManager.getUserSessions().entrySet()) {
 
             String getTrackInfoUrl = BASE_URL + "?method=track.getInfo&api_key=" + API_KEY + "&artist=" + artist + "&track=" + trackName + "&sk=" + entry.getValue() + "&format=json";
-
             JsonNode rootNode = getJsonNodeFromUrl(objectMapper, getTrackInfoUrl, httpClient, message);
-
-
             String userPlaycountForTrack = rootNode.get("track").get("userplaycount").asText();
-
             String username = client.getUserById(Snowflake.of(entry.getKey()))
                     .block()
                     .getUsername();
@@ -226,21 +240,16 @@ public class SpongeyBot {
 
         String userSessionKey = SessionManager.getSessionKey(message.getAuthor().get().getId().asLong());
 
-
         if (userSessionKey == null) {
             return message.getChannel().flatMap(channel -> channel.createMessage("please login to use this command"));
         }
-
 
         if (artistName.equals("")) {
            artistName = getUserCurrentTrackArtistName(objectMapper, httpClient, message);
         }
 
-
-
         EmbedCreateSpec.Builder embedBuilder = createEmbed("Who knows " + artistName.replace("+", " ")
                 + "?");
-
 
         for (Map.Entry<Long, String> entry : SessionManager.getUserSessions().entrySet()) {
             String getArtistInfoUrl = BASE_URL + "?method=artist.getinfo&artist=" + artistName + "&api_key=" + API_KEY + "&sk=" + entry.getValue() + "&format=json";
@@ -455,6 +464,10 @@ public class SpongeyBot {
 
                                     if (message.getContent().equalsIgnoreCase("$login")) {
                                         return loginCommand(message, objectMapper, httpClient, client);
+                                    }
+
+                                    if (message.getContent().equalsIgnoreCase("$help")) {
+                                        return helpCommand(message);
                                     }
 
                                     return Mono.empty();
