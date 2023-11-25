@@ -17,11 +17,4 @@ public class SessionManager {
         return userSessions.get(userId);
     }
 
-    public static boolean hasSessionKey(long userId) {
-        return userSessions.containsKey(userId);
-    }
-
-    public void removeSessionKey(long userId) {
-        userSessions.remove(userId);
-    }
 }

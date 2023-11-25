@@ -55,9 +55,6 @@ public class SpongeyBot {
         String getRecentUserTracksUrl = BASE_URL + "?method=user.getrecenttracks&api_key=" + API_KEY + "&sk=" + userSessionKey + "&format=json";
         System.out.println("recent tracksu rl: " + getRecentUserTracksUrl);
 
-
-
-
         try {
             JsonNode rootNode =  getJsonNodeFromUrl(objectMapper, getRecentUserTracksUrl, httpClient, message);
             JsonNode trackNode = rootNode.path("recenttracks").path("track");
@@ -88,8 +85,6 @@ public class SpongeyBot {
             rootNode = objectMapper.readTree(response.getEntity().getContent());
         } catch (IOException e) {
             handleException("error: couldn't get root node of track info url", message);
-
-
         }
 
         return rootNode;
