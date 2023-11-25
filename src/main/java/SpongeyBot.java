@@ -24,45 +24,92 @@ import java.util.stream.Collectors;
 
 public class SpongeyBot {
 
-
     private static final String BOT_TOKEN = System.getenv("BOT_TOKEN");
 
     private static final String BASE_URL = "http://ws.audioscrobbler.com/2.0/";
 
     private static final String API_KEY = System.getenv().get("API_KEY");
 
-
     private static final String API_SECRET = System.getenv("API_SECRET");
+
+
+    private static void handleException(String errorMessage, Message message) {
+        message.getChannel().flatMap(channel -> channel.createMessage(errorMessage)).block();
+    }
+
+    private static EmbedCreateSpec.Builder createEmbed(String name) {
+
+        return EmbedCreateSpec.builder()
+                .color(Color.BLUE)
+                .url("https://discord4j.com")
+                .author(name, "https://discord4j.com", "https://i.imgur.com/F9BhEoz.png")
+                .thumbnail("https://i.imgur.com/F9BhEoz.png")
+                .timestamp(Instant.now());
+    }
+
+    private static String getUserCurrentTrackArtistName(ObjectMapper objectMapper, CloseableHttpClient httpClient, Message message) {
+
+        String artistName = "";
+        String userSessionKey = SessionManager.getSessionKey(message.getAuthor().get().getId().asLong());
+
+        String getRecentUserTracksUrl = BASE_URL + "?method=user.getrecenttracks&api_key=" + API_KEY + "&sk=" + userSessionKey + "&format=json";
+        System.out.println("recent tracksu rl: " + getRecentUserTracksUrl);
+
+
+
+
+        try {
+            JsonNode rootNode =  getJsonNodeFromUrl(objectMapper, getRecentUserTracksUrl, httpClient, message);
+            JsonNode trackNode = rootNode.path("recenttracks").path("track");
+            JsonNode firstTrackNode = trackNode.get(0);
+            JsonNode artistNode = firstTrackNode.path("artist").path("#text");
+            artistName = artistNode.asText().replace(" ", "+");
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        return artistName;
+    }
+
+        private static JsonNode getJsonNodeFromUrl(ObjectMapper objectMapper, String url, CloseableHttpClient httpClient, Message message) {
+
+        System.out.println("This is track info url for some user: " + url);
+        HttpGet request = new HttpGet(url);
+        HttpResponse response = null;
+        try {
+            response = httpClient.execute(request);
+        } catch (IOException e) {
+            handleException("error: couldn't execute track info url", message);
+        }
+
+        System.out.println("API Response: " + response.getStatusLine());
+        JsonNode rootNode = null;
+        try {
+            rootNode = objectMapper.readTree(response.getEntity().getContent());
+        } catch (IOException e) {
+            handleException("error: couldn't get root node of track info url", message);
+
+
+        }
+
+        return rootNode;
+    }
 
     static Mono<?> scrobbleLbCommand(Message message, ObjectMapper objectMapper, CloseableHttpClient httpClient, GatewayDiscordClient client) {
 
-        EmbedCreateSpec.Builder embedBuilder = EmbedCreateSpec.builder()
-                .color(Color.BLUE)
-                .url("https://discord4j.com")
-                .author("Scrobble leaderboard", "https://discord4j.com", "https://i.imgur.com/F9BhEoz.png")
-                .timestamp(Instant.now());
+        EmbedCreateSpec.Builder embedBuilder = createEmbed("Scrobble leaderboard");
+
 
 
         for (Map.Entry<Long, String> entry : SessionManager.getUserSessions().entrySet()) {
 
-            String getTrackInfoUrl = "http://ws.audioscrobbler.com/2.0/?method=user.getInfo&api_key=" + API_KEY + "&sk=" + entry.getValue() + "&format=json";
+            String getTrackInfoUrl = BASE_URL + "?method=user.getInfo&api_key=" + API_KEY + "&sk=" + entry.getValue() + "&format=json";
             System.out.println("This is user info for some user: " + getTrackInfoUrl);
-            HttpGet request = new HttpGet(getTrackInfoUrl);
-            HttpResponse response = null;
-            try {
-                response = httpClient.execute(request);
-            } catch (IOException e) {
-                return message.getChannel().flatMap(channel -> channel.createMessage("error: couldn't execute user info url"));
-            }
 
-            System.out.println("API Response: " + response.getStatusLine());
-            JsonNode rootNode = null;
-            try {
-                rootNode = objectMapper.readTree(response.getEntity().getContent());
-            } catch (IOException e) {
-                return message.getChannel().flatMap(channel -> channel.createMessage("error: couldn't get root node of user info url"));
 
-            }
+            JsonNode rootNode =  getJsonNodeFromUrl(objectMapper, getTrackInfoUrl, httpClient, message);
+
+
             String userPlaycount = rootNode.get("user").get("playcount").asText();
 
             String username = client.getUserById(Snowflake.of(entry.getKey()))
@@ -94,24 +141,14 @@ public class SpongeyBot {
 
         if (trackName.equals("")) {
             //get users current track, name from that and set trackName to that
-
-
-            String getRecentUserTracksUrl = "http://ws.audioscrobbler.com/2.0/?method=user.getrecenttracks&api_key=" + API_KEY + "&sk=" + userSessionKey + "&format=json";
-            System.out.println("recent tracksu rl: " + getRecentUserTracksUrl);
-            HttpGet request = new HttpGet(getRecentUserTracksUrl);
-            HttpResponse response = null;
-            try {
-                response = httpClient.execute(request);
-            } catch (IOException e) {
-                return message.getChannel().flatMap(channel -> channel.createMessage("error: couldn't go to the get recent tracks url"));
-            }
+            String getRecentUserTracksUrl = BASE_URL + "?method=user.getrecenttracks&api_key=" + API_KEY + "&sk=" + userSessionKey + "&format=json";
+            System.out.println("recent tracks url: " + getRecentUserTracksUrl);
+            JsonNode rootNode =  getJsonNodeFromUrl(objectMapper, getRecentUserTracksUrl, httpClient, message);
 
             try {
-                JsonNode rootNode =  objectMapper.readTree(response.getEntity().getContent());
                 JsonNode trackNode = rootNode.path("recenttracks").path("track");
                 JsonNode firstTrackNode = trackNode.get(0);
                 JsonNode trackNodeMain = firstTrackNode.path("name");
-
                 JsonNode artistNode = firstTrackNode.path("artist").path("#text");
                 artist = artistNode.asText().replace(" ", "+");
                 trackName = trackNodeMain.asText().replace(" ", "+");
@@ -121,61 +158,17 @@ public class SpongeyBot {
         }
 
 
-
-
-        String searchTrackForArtistNameUrl = "http://ws.audioscrobbler.com/2.0/?method=track.search&track=" + trackName + "&api_key=" + API_KEY + "&format=json";
-        System.out.println("This is search track for artistnameurl: " + searchTrackForArtistNameUrl);
-        HttpGet request1 = new HttpGet(searchTrackForArtistNameUrl);
-        HttpResponse response1 = null;
-        try {
-            response1 = httpClient.execute(request1);
-        } catch (IOException e) {
-            return message.getChannel().flatMap(channel -> channel.createMessage("error: couldn't execute search track for artist name url"));
-        }
-
-        try {
-            JsonNode rootNode1 =  objectMapper.readTree(response1.getEntity().getContent());
-
-            JsonNode trackNode1 = rootNode1.path("results").path("trackmatches").path("track");
-            JsonNode firstTrackNode1 = trackNode1.get(0);
-            JsonNode trackArtistName = firstTrackNode1.path("artist");
-            artist = trackArtistName.asText().replace(" ", "+");
-        } catch (Exception e) {
-            return message.getChannel().flatMap(channel -> channel.createMessage("error: couldn't get nodes from search track for artist name url "));
-        }
-
-
-
-
-
-        EmbedCreateSpec.Builder embedBuilder = EmbedCreateSpec.builder()
-                .color(Color.BLUE)
-                .url("https://discord4j.com")
-                .author("Who knows track: " + trackName.replace("+", " ")
-                        + " by " + artist.replace("+", " ") + "?", "https://discord4j.com", "https://i.imgur.com/F9BhEoz.png")
-                .timestamp(Instant.now());
+        EmbedCreateSpec.Builder embedBuilder = createEmbed("Who knows track: " + trackName.replace("+", " ")
+                + " by " + artist.replace("+", " ") + "?");
 
 
         for (Map.Entry<Long, String> entry : SessionManager.getUserSessions().entrySet()) {
 
-            String getTrackInfoUrl = "http://ws.audioscrobbler.com/2.0/?method=track.getInfo&api_key=" + API_KEY + "&artist=" + artist + "&track=" + trackName + "&sk=" + entry.getValue() + "&format=json";
-            System.out.println("This is track info url for some user: " + getTrackInfoUrl);
-            HttpGet request = new HttpGet(getTrackInfoUrl);
-            HttpResponse response = null;
-            try {
-                response = httpClient.execute(request);
-            } catch (IOException e) {
-                return message.getChannel().flatMap(channel -> channel.createMessage("error: couldn't execute track info url"));
-            }
+            String getTrackInfoUrl = BASE_URL + "?method=track.getInfo&api_key=" + API_KEY + "&artist=" + artist + "&track=" + trackName + "&sk=" + entry.getValue() + "&format=json";
 
-            System.out.println("API Response: " + response.getStatusLine());
-            JsonNode rootNode = null;
-            try {
-                rootNode = objectMapper.readTree(response.getEntity().getContent());
-            } catch (IOException e) {
-                return message.getChannel().flatMap(channel -> channel.createMessage("error: couldn't get root node of track info url"));
+            JsonNode rootNode = getJsonNodeFromUrl(objectMapper, getTrackInfoUrl, httpClient, message);
 
-            }
+
             String userPlaycountForTrack = rootNode.get("track").get("userplaycount").asText();
 
             String username = client.getUserById(Snowflake.of(entry.getKey()))
@@ -198,34 +191,12 @@ public class SpongeyBot {
                 .collect(Collectors.joining("+"));
 
         if (artistName.equals("")) {
-
-            String userSessionKey = SessionManager.getSessionKey(message.getAuthor().get().getId().asLong());
-
-            String getRecentUserTracksUrl = "http://ws.audioscrobbler.com/2.0/?method=user.getrecenttracks&api_key=" + API_KEY + "&sk=" + userSessionKey + "&format=json";
-            System.out.println("recent tracksu rl: " + getRecentUserTracksUrl);
-            HttpGet request = new HttpGet(getRecentUserTracksUrl);
-            HttpResponse response = null;
-            try {
-                response = httpClient.execute(request);
-            } catch (IOException e) {
-                throw new RuntimeException(e);
-            }
-
-            try {
-                JsonNode rootNode =  objectMapper.readTree(response.getEntity().getContent());
-                JsonNode trackNode = rootNode.path("recenttracks").path("track");
-                JsonNode firstTrackNode = trackNode.get(0);
-                JsonNode artistNode = firstTrackNode.path("artist").path("#text");
-                artistName = artistNode.asText().replace(" ", "+");
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-
+            artistName = getUserCurrentTrackArtistName(objectMapper, httpClient, message);
         }
 
         String artistSummary = "";
 
-        String artistInfoUrl = "http://ws.audioscrobbler.com/2.0/?method=artist.getinfo&artist=" + artistName + "&api_key=" + API_KEY + "&format=json";
+        String artistInfoUrl = BASE_URL + "?method=artist.getinfo&artist=" + artistName + "&api_key=" + API_KEY + "&format=json";
         System.out.println("this is artist info url: " + artistInfoUrl);
         HttpGet requestArtistInfo = new HttpGet(artistInfoUrl);
         HttpResponse responseArtistInfo = null;
@@ -244,11 +215,8 @@ public class SpongeyBot {
             return message.getChannel().flatMap(channel -> channel.createMessage("error: couldn't get nodes fromartist info url "));
         }
 
-        EmbedCreateSpec.Builder embedBuilder = EmbedCreateSpec.builder()
-                .color(Color.BLUE)
-                .url("https://discord4j.com")
-                .author(artistName.replace("+", " "), "https://discord4j.com", "https://i.imgur.com/F9BhEoz.png")
-                .timestamp(Instant.now());
+
+        EmbedCreateSpec.Builder embedBuilder = createEmbed((artistName.replace("+", " ")));
 
         embedBuilder.addField("Summary: ", artistSummary, false);
         return message.getChannel().flatMap(channel -> channel.createMessage(embedBuilder.build()));
@@ -266,60 +234,24 @@ public class SpongeyBot {
 
         if (userSessionKey == null) {
             return message.getChannel().flatMap(channel -> channel.createMessage("please login to use this command"));
-
         }
 
 
         if (artistName.equals("")) {
-            //get users current track, artist from that and set artistname to that
-
-            String getRecentUserTracksUrl = "http://ws.audioscrobbler.com/2.0/?method=user.getrecenttracks&api_key=" + API_KEY + "&sk=" + userSessionKey + "&format=json";
-            System.out.println("recent tracksu rl: " + getRecentUserTracksUrl);
-            HttpGet request = new HttpGet(getRecentUserTracksUrl);
-            HttpResponse response = null;
-            try {
-                response = httpClient.execute(request);
-            } catch (IOException e) {
-                throw new RuntimeException(e);
-            }
-
-            try {
-                JsonNode rootNode =  objectMapper.readTree(response.getEntity().getContent());
-                JsonNode trackNode = rootNode.path("recenttracks").path("track");
-                JsonNode firstTrackNode = trackNode.get(0);
-                JsonNode artistNode = firstTrackNode.path("artist").path("#text");
-                artistName = artistNode.asText().replace(" ", "+");
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
+           artistName = getUserCurrentTrackArtistName(objectMapper, httpClient, message);
         }
 
-        EmbedCreateSpec.Builder embedBuilder = EmbedCreateSpec.builder()
-                .color(Color.BLUE)
-                .url("https://discord4j.com")
-                .author("Who knows " + artistName.replace("+", " ")
-                        + "?", "https://discord4j.com", "https://i.imgur.com/F9BhEoz.png")
-                .timestamp(Instant.now());
+
+
+        EmbedCreateSpec.Builder embedBuilder = createEmbed("Who knows " + artistName.replace("+", " ")
+                + "?");
 
 
         for (Map.Entry<Long, String> entry : SessionManager.getUserSessions().entrySet()) {
-            String getArtistInfoUrl = "http://ws.audioscrobbler.com/2.0/?method=artist.getinfo&artist=" + artistName + "&api_key=" + API_KEY + "&sk=" + entry.getValue() + "&format=json";
+            String getArtistInfoUrl = BASE_URL + "?method=artist.getinfo&artist=" + artistName + "&api_key=" + API_KEY + "&sk=" + entry.getValue() + "&format=json";
             System.out.println("This is artist info url for some user: " + getArtistInfoUrl);
-            HttpGet request = new HttpGet(getArtistInfoUrl);
-            HttpResponse response = null;
-            try {
-                response = httpClient.execute(request);
-            } catch (IOException e) {
-                throw new RuntimeException(e);
-            }
 
-            System.out.println("API Response: " + response.getStatusLine());
-            JsonNode rootNode = null;
-            try {
-                rootNode = objectMapper.readTree(response.getEntity().getContent());
-            } catch (IOException e) {
-                throw new RuntimeException(e);
-            }
+            JsonNode rootNode = getJsonNodeFromUrl(objectMapper, getArtistInfoUrl, httpClient, message);
             String userPlaycountForArtist = rootNode.get("artist").get("stats").get("userplaycount").asText();
 
             String username = client.getUserById(Snowflake.of(entry.getKey()))
@@ -342,26 +274,17 @@ public class SpongeyBot {
 
         }
 
-
-        String url = "http://ws.audioscrobbler.com/2.0/?method=user.gettopartists&api_key=" + API_KEY + "&sk=" + userSessionKey + "&limit=5" + "&format=json";
+        String url = BASE_URL + "?method=user.gettopartists&api_key=" + API_KEY + "&sk=" + userSessionKey + "&limit=5" + "&format=json";
         return message.getChannel()
                 .flatMap(userResponse -> {
                     try {
-                        HttpGet request = new HttpGet(url);
-                        HttpResponse response = httpClient.execute(request);
+                        JsonNode rootNode =  getJsonNodeFromUrl(objectMapper, url, httpClient, message);
 
-                        System.out.println("API Response: " + response.getStatusLine());
-                        JsonNode rootNode = objectMapper.readTree(response.getEntity().getContent());
-
-                        EmbedCreateSpec.Builder embedBuilder = EmbedCreateSpec.builder()
-                                .color(Color.BLUE)
-                                .url("https://discord4j.com")
-                                .author( "Your top artists", "https://discord4j.com", "https://i.imgur.com/F9BhEoz.png")
-                                .thumbnail("https://i.imgur.com/F9BhEoz.png")
-                                .timestamp(Instant.now());
+                        EmbedCreateSpec.Builder embedBuilder = createEmbed("Your top artists");
 
 
                         JsonNode topArtistsNode = rootNode.path("topartists");
+
                         for (JsonNode artistNode : topArtistsNode.path("artist")) {
                             String name = artistNode.path("name").asText();
                             String playcount = artistNode.path("playcount").asText();
@@ -397,9 +320,9 @@ public class SpongeyBot {
         }
 
 
-        String url = "http://ws.audioscrobbler.com/2.0/?method=user.gettoptracks&api_key=" + API_KEY + "&sk=" + userSessionKey + "&limit=5" + "&format=json";
+        String url = BASE_URL + "?method=user.gettoptracks&api_key=" + API_KEY + "&sk=" + userSessionKey + "&limit=5" + "&format=json";
 
-        System.out.println("tihs is top tracks url: " + url);
+        System.out.println("top tracks url: " + url);
 
         return message.getChannel()
 
@@ -407,27 +330,19 @@ public class SpongeyBot {
 
 
                     try {
-                        HttpGet request = new HttpGet(url);
-                        HttpResponse response = httpClient.execute(request);
 
-                        System.out.println("API Response: " + response.getStatusLine());
-                        JsonNode rootNode = objectMapper.readTree(response.getEntity().getContent());
+                        JsonNode rootNode =  getJsonNodeFromUrl(objectMapper, url, httpClient, message);
 
-                        EmbedCreateSpec.Builder embedBuilder = EmbedCreateSpec.builder()
-                                .color(Color.BLUE)
-                                .url("https://discord4j.com")
-                                .author("your top tracks", "https://discord4j.com", "https://i.imgur.com/F9BhEoz.png")
-                                .thumbnail("https://i.imgur.com/F9BhEoz.png")
-                                .timestamp(Instant.now());
+                        EmbedCreateSpec.Builder embedBuilder = createEmbed("Your top tracks");
 
 
-                        JsonNode topArtistsNode = rootNode.path("toptracks");
-                        for (JsonNode artistNode : topArtistsNode.path("track")) {
-                            String name = artistNode.path("name").asText();
-                            String playcount = artistNode.path("playcount").asText();
-                            String imageUrl = artistNode.path("image")
+                        JsonNode topTracksNode = rootNode.path("toptracks");
+                        for (JsonNode trackNode : topTracksNode.path("track")) {
+                            String name = trackNode.path("name").asText();
+                            String playcount = trackNode.path("playcount").asText();
+                            String imageUrl = trackNode.path("image")
                                     .elements()
-                                    .next()  // Assuming there's only one image, change accordingly if there are multiple
+                                    .next()
                                     .path("#text")
                                     .asText();
                             embedBuilder.thumbnail(imageUrl);
@@ -451,25 +366,18 @@ public class SpongeyBot {
 
         return message.getChannel()
                 .flatMap(userResponse -> {
-                    String url = "http://ws.audioscrobbler.com/2.0/?method=auth.gettoken&api_key=" + API_KEY + "&format=json";
+                    String url = BASE_URL + "?method=auth.gettoken&api_key=" + API_KEY + "&format=json";
                     String token = "";
                     //Get user to auth first
                     try {
-                        HttpGet request = new HttpGet(url);
-                        HttpResponse response = httpClient.execute(request);
+                        JsonNode rootNode =  getJsonNodeFromUrl(objectMapper, url, httpClient, message);
 
-                        System.out.println("API Response: " + response.getStatusLine());
-                        JsonNode rootNode = objectMapper.readTree(response.getEntity().getContent());
                         token = rootNode.get("token").asText();
                         String requestAuthUrl = "http://www.last.fm/api/auth/?api_key=" + API_KEY + "&token=" + token;
 
 
-                        EmbedCreateSpec.Builder embedBuilder = EmbedCreateSpec.builder()
-                                .color(Color.BLUE)
-                                .url("https://discord4j.com")
-                                .author("Login to lastfm ", "https://discord4j.com", "https://i.imgur.com/F9BhEoz.png")
-                                .addField("Login here: ", requestAuthUrl, false)
-                                .timestamp(Instant.now());
+                        EmbedCreateSpec.Builder embedBuilder = createEmbed("Login to last.fm").addField("Login here: ", requestAuthUrl, false);
+
 
                         return Mono.justOrEmpty(message.getAuthor())
                                 .flatMap(user -> user.getPrivateChannel()
@@ -477,10 +385,6 @@ public class SpongeyBot {
                                         .map(sentMessage -> "Check your DMs for the authentication link"))
                                 .delayElement(Duration.ofSeconds(10))
                                 .then(Mono.just(token));
-
-
-
-
                     } catch (Exception e) {
                         e.printStackTrace();
                         return Mono.empty();
@@ -491,37 +395,22 @@ public class SpongeyBot {
 
                     System.out.println(apisignature);
 
-                    String getSessionUrl = "http://ws.audioscrobbler.com/2.0/?method=auth.getSession&api_key=d44fe925c065064a6c03ce9686f02c17" +
+                    String getSessionUrl = BASE_URL + "?method=auth.getSession&api_key=" + API_KEY +
                             "&token=" + token + "&api_sig=" + apisignature  + "&format=json";
 
                     System.out.println("This is session url " + getSessionUrl);
-                    HttpGet requestSessionUrl = new HttpGet(getSessionUrl);
-                    HttpResponse sessionResponse = null;
-                    try {
-                        sessionResponse = httpClient.execute(requestSessionUrl);
 
-                    } catch (IOException e) {
-                        return Mono.error(new RuntimeException(e));
-                    }
-
-                    System.out.println("API Response: " + sessionResponse.getStatusLine());
-                    JsonNode rootNode = null;
-                    try {
-                        rootNode = objectMapper.readTree(sessionResponse.getEntity().getContent());
-                    } catch (IOException e) {
-                        return Mono.error(new RuntimeException(e));
-                    }
+                    JsonNode rootNode = getJsonNodeFromUrl(objectMapper, getSessionUrl, httpClient, message);
 
                     try {
                         Thread.sleep(3000);
                     } catch (InterruptedException e) {
-                        e.printStackTrace(); // Handle the exception as needed
+                        e.printStackTrace();
                     }
 
                     System.out.println("this is root node: " + rootNode);
 
                     String sessionKey = rootNode.get("session").get("key").asText();
-                    System.out.println("Nirhjah this is key: " + sessionKey);
                     System.out.println("user id+ " + message.getAuthor().get().getId().asLong() );
                     SessionManager.storeSessionKey(message.getAuthor().get().getId().asLong(), sessionKey);
 
