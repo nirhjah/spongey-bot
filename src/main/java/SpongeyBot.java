@@ -1,5 +1,9 @@
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mongodb.client.MongoClient;
+import com.mongodb.client.MongoClients;
+import com.mongodb.client.MongoCollection;
+import com.mongodb.client.MongoDatabase;
 import discord4j.common.util.Snowflake;
 import discord4j.core.DiscordClient;
 import discord4j.core.GatewayDiscordClient;
@@ -12,17 +16,19 @@ import org.apache.http.HttpResponse;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClients;
+import org.bson.Document;
 import reactor.core.publisher.Mono;
 
 import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Arrays;
-import java.util.Map;
 import java.util.stream.Collectors;
 
 
 public class SpongeyBot {
+
+    static String connectionString = System.getenv("CONNECTION_STRING");
 
     private static final String BOT_TOKEN = System.getenv("BOT_TOKEN");
 
@@ -47,10 +53,35 @@ public class SpongeyBot {
                 .timestamp(Instant.now());
     }
 
+    private static String getUserSessionKey(Message message) {
+
+        String userSessionKey = "";
+
+
+        try (MongoClient mongoClient = MongoClients.create(connectionString)) {
+            MongoDatabase database = mongoClient.getDatabase("spongeybot");
+            MongoCollection<Document> collection = database.getCollection("users");
+
+
+
+            Document query = new Document("userid", message.getAuthor().get().getId().asLong());
+            Document result = collection.find(query).first();
+            if (result != null) {
+                userSessionKey = result.getString("sessionkey");
+
+            }
+
+        }
+
+        return userSessionKey;
+
+    }
+
     private static String getUserCurrentTrackArtistName(ObjectMapper objectMapper, CloseableHttpClient httpClient, Message message) {
 
         String artistName = "";
-        String userSessionKey = SessionManager.getSessionKey(message.getAuthor().get().getId().asLong());
+
+        String userSessionKey = getUserSessionKey(message);
 
         String getRecentUserTracksUrl = BASE_URL + "?method=user.getrecenttracks&api_key=" + API_KEY + "&sk=" + userSessionKey + "&format=json";
         System.out.println("recent tracksu rl: " + getRecentUserTracksUrl);
@@ -70,7 +101,6 @@ public class SpongeyBot {
 
         private static JsonNode getJsonNodeFromUrl(ObjectMapper objectMapper, String url, CloseableHttpClient httpClient, Message message) {
 
-        System.out.println("This is track info url for some user: " + url);
         HttpGet request = new HttpGet(url);
         HttpResponse response = null;
         try {
@@ -88,6 +118,66 @@ public class SpongeyBot {
         }
 
         return rootNode;
+    }
+
+    static Mono<?> getScrobblesInWeek(ObjectMapper objectMapper, CloseableHttpClient httpClient, Message message) {
+
+        String userSessionKey = getUserSessionKey(message);
+
+        String getRecentUserTracksUrl = BASE_URL + "?method=user.getrecenttracks&limit=200&api_key=" + API_KEY + "&sk=" + userSessionKey + "&format=json";
+        System.out.println("recent tracksu rl: " + getRecentUserTracksUrl);
+
+        JsonNode rootNode = null;
+        int totalPages = 0;
+        try {
+            rootNode =  getJsonNodeFromUrl(objectMapper, getRecentUserTracksUrl, httpClient, message);
+            totalPages = Integer.parseInt(rootNode.path("recenttracks").path("@attr").path("totalPages").asText());
+            System.out.println(" total pages: " + totalPages);
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        //TODO DONT INCLUDE NOWPLAYING
+
+        int scrobbleCounterForWeek = 0;
+
+        int currentTimeUTS = (int) (System.currentTimeMillis() / 1000);
+        boolean continueProcessing = true;
+
+
+
+        while (continueProcessing) {
+
+            for (int i = 1; i <= totalPages; i++) {
+                String urlPerPage = BASE_URL + "?method=user.getrecenttracks&limit=200&page=" + i + "&api_key=" + API_KEY + "&sk=" + userSessionKey + "&format=json";
+                JsonNode pageNode = getJsonNodeFromUrl(objectMapper, urlPerPage, httpClient, message);
+
+                JsonNode listOfTracksForGivenPage =  pageNode.get("recenttracks").get("track");
+
+                for (JsonNode node : listOfTracksForGivenPage) {
+                    int dateNode = Integer.parseInt(node.get("date").get("uts").asText());
+                    if (dateNode  < currentTimeUTS && dateNode >= 1672570800) {
+                        scrobbleCounterForWeek += 1;
+                    }
+                    else {
+                        continueProcessing = false;
+                    }
+
+                }
+
+                if (!continueProcessing) {
+                    break;
+                }
+            }
+
+
+        }
+
+
+
+        System.out.println("SCROBBLES FOR THE YEAR: " + scrobbleCounterForWeek);
+        return Mono.empty();
+
     }
 
 
@@ -112,11 +202,17 @@ public class SpongeyBot {
 
         EmbedCreateSpec.Builder embedBuilder = createEmbed("Scrobble leaderboard");
 
+        MongoClient mongoClient = MongoClients.create(connectionString);
+        MongoDatabase database = mongoClient.getDatabase("spongeybot");
+        MongoCollection<Document> collection = database.getCollection("users");
 
 
-        for (Map.Entry<Long, String> entry : SessionManager.getUserSessions().entrySet()) {
+        for (Document document : collection.find()) {
 
-            String getTrackInfoUrl = BASE_URL + "?method=user.getInfo&api_key=" + API_KEY + "&sk=" + entry.getValue() + "&format=json";
+            String sessionKey = document.getString("sessionkey");
+            long userId = document.getLong("userid");
+
+            String getTrackInfoUrl = BASE_URL + "?method=user.getInfo&api_key=" + API_KEY + "&sk=" + sessionKey + "&format=json";
             System.out.println("This is user info for some user: " + getTrackInfoUrl);
 
 
@@ -125,7 +221,7 @@ public class SpongeyBot {
 
             String userPlaycount = rootNode.get("user").get("playcount").asText();
 
-            String username = client.getUserById(Snowflake.of(entry.getKey()))
+            String username = client.getUserById(Snowflake.of(userId))
                     .block()
                     .getUsername();
 
@@ -144,7 +240,15 @@ public class SpongeyBot {
                 .collect(Collectors.joining("+"));
 
         String artist = "";
-        String userSessionKey = SessionManager.getSessionKey(message.getAuthor().get().getId().asLong());
+
+
+      MongoClient mongoClient = MongoClients.create(connectionString);
+            MongoDatabase database = mongoClient.getDatabase("spongeybot");
+            MongoCollection<Document> collection = database.getCollection("users");
+
+        String userSessionKey = getUserSessionKey(message);
+
+
 
 
         if (userSessionKey == null) {
@@ -175,12 +279,20 @@ public class SpongeyBot {
                 + " by " + artist.replace("+", " ") + "?");
 
 
-        for (Map.Entry<Long, String> entry : SessionManager.getUserSessions().entrySet()) {
 
-            String getTrackInfoUrl = BASE_URL + "?method=track.getInfo&api_key=" + API_KEY + "&artist=" + artist + "&track=" + trackName + "&sk=" + entry.getValue() + "&format=json";
+
+        for (Document document : collection.find()) {
+
+            String sessionKey = document.getString("sessionkey");
+            long userId = document.getLong("userid");
+
+            String getTrackInfoUrl = BASE_URL + "?method=track.getInfo&api_key=" + API_KEY + "&artist=" + artist + "&track=" + trackName + "&sk=" + sessionKey + "&format=json";
+
+            System.out.println("This is track info url: " + getTrackInfoUrl);
+
             JsonNode rootNode = getJsonNodeFromUrl(objectMapper, getTrackInfoUrl, httpClient, message);
             String userPlaycountForTrack = rootNode.get("track").get("userplaycount").asText();
-            String username = client.getUserById(Snowflake.of(entry.getKey()))
+            String username = client.getUserById(Snowflake.of(userId))
                     .block()
                     .getUsername();
 
@@ -238,7 +350,17 @@ public class SpongeyBot {
                 .skip(1)
                 .collect(Collectors.joining("+"));
 
-        String userSessionKey = SessionManager.getSessionKey(message.getAuthor().get().getId().asLong());
+
+
+
+
+        MongoClient mongoClient = MongoClients.create(connectionString);
+        MongoDatabase database = mongoClient.getDatabase("spongeybot");
+        MongoCollection<Document> collection = database.getCollection("users");
+
+
+        String userSessionKey = getUserSessionKey(message);
+
 
         if (userSessionKey == null) {
             return message.getChannel().flatMap(channel -> channel.createMessage("please login to use this command"));
@@ -251,14 +373,17 @@ public class SpongeyBot {
         EmbedCreateSpec.Builder embedBuilder = createEmbed("Who knows " + artistName.replace("+", " ")
                 + "?");
 
-        for (Map.Entry<Long, String> entry : SessionManager.getUserSessions().entrySet()) {
-            String getArtistInfoUrl = BASE_URL + "?method=artist.getinfo&artist=" + artistName + "&api_key=" + API_KEY + "&sk=" + entry.getValue() + "&format=json";
+        for (Document document : collection.find()) {
+
+            String sessionKey = document.getString("sessionkey");
+            long userId = document.getLong("userid");
+            String getArtistInfoUrl = BASE_URL + "?method=artist.getinfo&artist=" + artistName + "&api_key=" + API_KEY + "&sk=" + sessionKey + "&format=json";
             System.out.println("This is artist info url for some user: " + getArtistInfoUrl);
 
             JsonNode rootNode = getJsonNodeFromUrl(objectMapper, getArtistInfoUrl, httpClient, message);
             String userPlaycountForArtist = rootNode.get("artist").get("stats").get("userplaycount").asText();
 
-            String username = client.getUserById(Snowflake.of(entry.getKey()))
+            String username = client.getUserById(Snowflake.of(userId))
                     .block()
                     .getUsername();
 
@@ -271,7 +396,13 @@ public class SpongeyBot {
 
 
     static Mono<?> topArtistsCommand(Message message, ObjectMapper objectMapper, CloseableHttpClient httpClient, GatewayDiscordClient client) {
-        String userSessionKey = SessionManager.getSessionKey(message.getAuthor().get().getId().asLong());
+
+        MongoClient mongoClient = MongoClients.create(connectionString);
+        MongoDatabase database = mongoClient.getDatabase("spongeybot");
+        MongoCollection<Document> collection = database.getCollection("users");
+
+
+        String userSessionKey = getUserSessionKey(message);
 
         if (userSessionKey == null) {
             return message.getChannel().flatMap(channel -> channel.createMessage("please login to use this command"));
@@ -316,7 +447,13 @@ public class SpongeyBot {
     }
 
     static Mono<?> topTracksCommand(Message message, ObjectMapper objectMapper, CloseableHttpClient httpClient, GatewayDiscordClient client) {
-        String userSessionKey = SessionManager.getSessionKey(message.getAuthor().get().getId().asLong());
+
+        MongoClient mongoClient = MongoClients.create(connectionString);
+        MongoDatabase database = mongoClient.getDatabase("spongeybot");
+        MongoCollection<Document> collection = database.getCollection("users");
+
+
+        String userSessionKey = getUserSessionKey(message);
 
         if (userSessionKey == null) {
             return message.getChannel().flatMap(channel -> channel.createMessage("please login to use this command"));
@@ -368,6 +505,20 @@ public class SpongeyBot {
 
     static Mono<?> loginCommand(Message message, ObjectMapper objectMapper, CloseableHttpClient httpClient, GatewayDiscordClient client) {
 
+        MongoClient mongoClient = MongoClients.create(connectionString);
+        MongoDatabase database = mongoClient.getDatabase("spongeybot");
+        MongoCollection<Document> collection = database.getCollection("users");
+
+
+        Document query = new Document("userid", message.getAuthor().get().getId().asLong());
+        Document result = collection.find(query).first();
+        if (result != null) {
+            return message.getChannel().flatMap(channel -> channel.createMessage("You are already logged in :D"));
+
+
+        }
+
+
         return message.getChannel()
                 .flatMap(userResponse -> {
                     String url = BASE_URL + "?method=auth.gettoken&api_key=" + API_KEY + "&format=json";
@@ -416,7 +567,16 @@ public class SpongeyBot {
 
                     String sessionKey = rootNode.get("session").get("key").asText();
                     System.out.println("user id+ " + message.getAuthor().get().getId().asLong() );
-                    SessionManager.storeSessionKey(message.getAuthor().get().getId().asLong(), sessionKey);
+
+                        Document newUser = new Document("userid", message.getAuthor().get().getId().asLong())
+                                .append("sessionkey", sessionKey);
+
+                        collection.insertOne(newUser);
+                        System.out.println("newUser inserted successfully.");
+
+
+
+
 
                     return Mono.justOrEmpty(message.getAuthor())
                             .flatMap(user -> user.getPrivateChannel()
@@ -428,7 +588,9 @@ public class SpongeyBot {
 
         public static void main(String[] args) {
 
-        ObjectMapper objectMapper = new ObjectMapper();
+
+
+            ObjectMapper objectMapper = new ObjectMapper();
         CloseableHttpClient httpClient = HttpClients.createDefault();
 
         DiscordClient.create(BOT_TOKEN)
@@ -468,6 +630,10 @@ public class SpongeyBot {
 
                                     if (message.getContent().equalsIgnoreCase("$help")) {
                                         return helpCommand(message);
+                                    }
+
+                                    if (message.getContent().equalsIgnoreCase("$testing")) {
+                                        return getScrobblesInWeek(objectMapper, httpClient, message);
                                     }
 
                                     return Mono.empty();

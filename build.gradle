@@ -18,6 +18,8 @@ dependencies {
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.8.1'
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.8.1'
 
+    implementation 'org.mongodb:mongodb-driver-sync:4.11.1'
+
     implementation "com.discord4j:discord4j-core:3.2.6"
     implementation 'org.apache.httpcomponents:httpclient:4.5.13' // Check for the latest version
 
