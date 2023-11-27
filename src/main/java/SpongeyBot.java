@@ -1,9 +1,12 @@
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;
+import com.mongodb.client.model.Filters;
 import discord4j.common.util.Snowflake;
 import discord4j.core.DiscordClient;
 import discord4j.core.GatewayDiscordClient;
@@ -17,12 +20,12 @@ import org.apache.http.client.methods.HttpGet;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClients;
 import org.bson.Document;
+import org.bson.conversions.Bson;
 import reactor.core.publisher.Mono;
 
 import java.io.IOException;
-import java.time.Duration;
-import java.time.Instant;
-import java.util.Arrays;
+import java.time.*;
+import java.util.*;
 import java.util.stream.Collectors;
 
 
@@ -120,63 +123,207 @@ public class SpongeyBot {
         return rootNode;
     }
 
-    static Mono<?> getScrobblesInWeek(ObjectMapper objectMapper, CloseableHttpClient httpClient, Message message) {
 
-        String userSessionKey = getUserSessionKey(message);
 
-        String getRecentUserTracksUrl = BASE_URL + "?method=user.getrecenttracks&limit=200&api_key=" + API_KEY + "&sk=" + userSessionKey + "&format=json";
-        System.out.println("recent tracksu rl: " + getRecentUserTracksUrl);
+    private static List<JsonNode> splitJsonArrayIntoChunks(ArrayNode jsonArray, int chunkSize) {
+        List<JsonNode> chunks = new ArrayList<>();
+        int totalItems = jsonArray.size();
 
-        JsonNode rootNode = null;
-        int totalPages = 0;
-        try {
-            rootNode =  getJsonNodeFromUrl(objectMapper, getRecentUserTracksUrl, httpClient, message);
-            totalPages = Integer.parseInt(rootNode.path("recenttracks").path("@attr").path("totalPages").asText());
-            System.out.println(" total pages: " + totalPages);
+        for (int i = 0; i < totalItems; i += chunkSize) {
+            int endIndex = Math.min(i + chunkSize, totalItems);
 
-        } catch (Exception e) {
-            e.printStackTrace();
+            // Create a new ArrayNode for each chunk
+            ArrayNode chunk = jsonArray.arrayNode();
+            for (int j = i; j < endIndex; j++) {
+                chunk.add(jsonArray.get(j));
+            }
+
+            chunks.add(chunk);
         }
-        //TODO DONT INCLUDE NOWPLAYING
 
-        int scrobbleCounterForWeek = 0;
-
-        int currentTimeUTS = (int) (System.currentTimeMillis() / 1000);
-        boolean continueProcessing = true;
+        return chunks;
+    }
 
 
+   /* static Mono<?> updateRecentCommand(ObjectMapper objectMapper, CloseableHttpClient httpClient, Message message) {
+        MongoClient mongoClient = MongoClients.create(connectionString);
+        MongoDatabase database = mongoClient.getDatabase("spongeybot");
+        MongoCollection<Document> collection = database.getCollection("scrobbles");
 
-        while (continueProcessing) {
+        Document query = new Document("userid", message.getAuthor().get().getId().asLong());
+        Document result = collection.find(query).first();
+        if (result != null) {
+            //user found to have full update, now check for smaller update
 
-            for (int i = 1; i <= totalPages; i++) {
-                String urlPerPage = BASE_URL + "?method=user.getrecenttracks&limit=200&page=" + i + "&api_key=" + API_KEY + "&sk=" + userSessionKey + "&format=json";
-                JsonNode pageNode = getJsonNodeFromUrl(objectMapper, urlPerPage, httpClient, message);
+            //get latest timestamp for track we got saved
+            //get current uts
 
-                JsonNode listOfTracksForGivenPage =  pageNode.get("recenttracks").get("track");
 
-                for (JsonNode node : listOfTracksForGivenPage) {
-                    int dateNode = Integer.parseInt(node.get("date").get("uts").asText());
-                    if (dateNode  < currentTimeUTS && dateNode >= 1672570800) {
-                        scrobbleCounterForWeek += 1;
-                    }
-                    else {
-                        continueProcessing = false;
-                    }
+        }
+    }*/
 
-                }
+    static Mono<?> updateCommand(ObjectMapper objectMapper, CloseableHttpClient httpClient, Message message, GatewayDiscordClient client) {
 
-                if (!continueProcessing) {
-                    break;
-                }
+
+        MongoClient mongoClient = MongoClients.create(connectionString);
+        MongoDatabase database = mongoClient.getDatabase("spongeybot");
+
+
+
+
+        long userId = 1;
+        String sessionKey = "sessionkey";
+
+        String username = client.getUserById(Snowflake.of(userId))
+                .block()
+                .getUsername();
+
+
+            System.out.println("Now updating user: " + userId + " username: " + username);
+
+
+
+            String getRecentUserTracksUrl = BASE_URL + "?method=user.getrecenttracks&limit=200&api_key=" + API_KEY + "&sk=" + sessionKey + "&format=json";
+            System.out.println("recent tracksu rl: " + getRecentUserTracksUrl);
+
+            ArrayNode mergedResult = objectMapper.createArrayNode();
+
+
+            JsonNode rootNode = null;
+            int totalPages = 0;
+            try {
+                rootNode =  getJsonNodeFromUrl(objectMapper, getRecentUserTracksUrl, httpClient, message);
+                totalPages = Integer.parseInt(rootNode.path("recenttracks").path("@attr").path("totalPages").asText());
+                System.out.println(" total pages: " + totalPages);
+
+            } catch (Exception e) {
+                e.printStackTrace();
             }
 
 
+            for (int i = 1; i <= totalPages; i++) {
+                String urlPerPage = BASE_URL + "?method=user.getrecenttracks&limit=200&page=" + i + "&api_key=" + API_KEY + "&sk=" + sessionKey + "&format=json";
+                JsonNode pageNode = getJsonNodeFromUrl(objectMapper, urlPerPage, httpClient, message);
+                ArrayNode tracksToProcess = new ObjectMapper().createArrayNode();
+
+                JsonNode listOfTracksForGivenPage = pageNode.get("recenttracks").get("track");
+                JsonNode firstTrackNode = listOfTracksForGivenPage.get(0);
+
+                for (JsonNode track : listOfTracksForGivenPage) {
+                    if (!(firstTrackNode.has("@attr") && firstTrackNode.get("@attr").has("nowplaying")
+                            && firstTrackNode.get("@attr").get("nowplaying").asText().equals("true"))) {
+
+                        tracksToProcess.add(track);
+
+                    }
+                }
+
+
+                System.out.println("we on page: " + i);
+                System.out.println("This is url for page " + i + ": " + urlPerPage);
+                mergedResult.addAll((ArrayNode) tracksToProcess);
+            }
+
+
+
+
+
+
+            //after mergedresult done
+
+
+            List<JsonNode> chunks = splitJsonArrayIntoChunks(mergedResult, 1000);
+            Collections.reverse(chunks);
+            for (int i = 0; i < chunks.size(); i++) {
+                String chunkString = chunks.get(i).toString();
+
+                Document dataDocument = new Document("userId", userId)
+                        .append("chunkIndex", i)
+                        .append("jsonData", chunkString);
+
+                MongoCollection<Document> jsonDataCollection = database.getCollection("scrobbles");
+                jsonDataCollection.insertOne(dataDocument);
+            }
+
+            System.out.println("Successfully updated user: " + userId);
+
+
+
+
+        return message.getChannel().flatMap(channel -> channel.createMessage("All data  updated :D"));
+
+
+    }
+
+    private static long convertToUnixTimestamp(LocalDateTime localDateTime) {
+        return localDateTime.atZone(ZoneId.systemDefault()).toEpochSecond();
+    }
+
+    static Mono<?> getScrobblesInTimeframe(ObjectMapper objectMapper, CloseableHttpClient httpClient, Message message) throws JsonProcessingException {
+        //if no param given, go for all scrobbles
+        //other params: years like 2023, 2022, 2021, 2020 then it would get the time for 01 jan 1200 am that year until 31 dec 11:59 pm that year
+
+
+        String[] command = message.getContent().split(" ");
+
+        String year = "";
+        if (command.length >= 2) {
+            year = command[1];
+            System.out.println("Year: " + year);
+        } else {
+            return message.getChannel().flatMap(channel -> channel.createMessage("Valid commands: $scrobbles 2023, $scrobbles 2022, $scrobbles 2021 etc"));
+
         }
 
+        int scrobbleCounterForWeek = 0;
+        int currentTimeUTS = (int) (System.currentTimeMillis() / 1000);
 
 
-        System.out.println("SCROBBLES FOR THE YEAR: " + scrobbleCounterForWeek);
-        return Mono.empty();
+        MongoClient mongoClient = MongoClients.create(connectionString);
+        MongoDatabase database = mongoClient.getDatabase("spongeybot");
+        MongoCollection<Document> collection = database.getCollection("scrobbles");
+
+        //gets all docs in scrobbles collectionf for a user
+        Bson filter = Filters.all("userId", message.getAuthor().get().getId().asLong());
+
+        long startOfGivenYearUTS = 0;
+        long endOfGivenYearUTS = 0;
+
+        LocalDateTime givenStartDateTime = LocalDateTime.of(Integer.parseInt(year), Month.JANUARY, 1, 0, 0);
+        LocalDateTime givenEndDateTime = LocalDateTime.of(Integer.parseInt(year), Month.DECEMBER, 31, 23, 59);
+
+        if (year.equals("")) {
+
+            startOfGivenYearUTS = 1672570800;
+            endOfGivenYearUTS = currentTimeUTS;
+        } else {
+            System.out.println("This is start date: " + givenStartDateTime);
+            System.out.println("This is end date: " + givenEndDateTime);
+
+            startOfGivenYearUTS = convertToUnixTimestamp(givenStartDateTime);
+            endOfGivenYearUTS = convertToUnixTimestamp(givenEndDateTime);
+
+        }
+
+        for (Document doc : collection.find(filter)) {
+            JsonNode jsonNode = objectMapper.readTree(doc.get("jsonData").toString());
+
+
+            for (JsonNode track : jsonNode) {
+
+                int dateNode = Integer.parseInt(track.get("date").get("uts").asText());
+
+                if (dateNode  < endOfGivenYearUTS && dateNode >= startOfGivenYearUTS) {
+                    scrobbleCounterForWeek += 1;
+                }
+
+            }
+        }
+
+        String finalYear = year;
+        int finalScrobbleCounterForWeek = scrobbleCounterForWeek;
+        return message.getChannel().flatMap(channel -> channel.createMessage("Your total scrobbles for " + finalYear + ": " + finalScrobbleCounterForWeek));
+
 
     }
 
@@ -199,6 +346,9 @@ public class SpongeyBot {
     }
 
     static Mono<?> scrobbleLbCommand(Message message, ObjectMapper objectMapper, CloseableHttpClient httpClient, GatewayDiscordClient client) {
+
+        Map<String, Integer> unsortedscrobbleLb = new HashMap<>();
+
 
         EmbedCreateSpec.Builder embedBuilder = createEmbed("Scrobble leaderboard");
 
@@ -225,8 +375,24 @@ public class SpongeyBot {
                     .block()
                     .getUsername();
 
-            embedBuilder.addField("", username +  ": " + userPlaycount + " plays", true);
+            unsortedscrobbleLb.put(username, Integer.valueOf(userPlaycount));
+
         }
+
+
+        List<Map.Entry<String, Integer>> list = new LinkedList<>(unsortedscrobbleLb.entrySet());
+
+        Collections.sort(list, Collections.reverseOrder(Comparator.comparing(Map.Entry::getValue)));
+
+        Map<String, Integer> sortedMap = new LinkedHashMap<>();
+        for (Map.Entry<String, Integer> entry : list) {
+            sortedMap.put(entry.getKey(), entry.getValue());
+        }
+
+        for (Map.Entry<String, Integer> entry : sortedMap.entrySet()) {
+            embedBuilder.addField(entry.getKey() , "Plays: " + entry.getValue() , false);
+        }
+
 
 
         return message.getChannel().flatMap(channel -> channel.createMessage(embedBuilder.build()));
@@ -352,6 +518,7 @@ public class SpongeyBot {
 
 
 
+        Map<String, Integer> unsortedWk = new HashMap<>();
 
 
         MongoClient mongoClient = MongoClients.create(connectionString);
@@ -387,8 +554,24 @@ public class SpongeyBot {
                     .block()
                     .getUsername();
 
-            embedBuilder.addField(username, "Plays: " + userPlaycountForArtist, false);
+            unsortedWk.put(username, Integer.valueOf(userPlaycountForArtist));
         }
+
+        List<Map.Entry<String, Integer>> list = new LinkedList<>(unsortedWk.entrySet());
+
+        // Sort the list based on the values
+        Collections.sort(list, Collections.reverseOrder(Comparator.comparing(Map.Entry::getValue)));
+
+        Map<String, Integer> sortedMap = new LinkedHashMap<>();
+        for (Map.Entry<String, Integer> entry : list) {
+            sortedMap.put(entry.getKey(), entry.getValue());
+        }
+
+        for (Map.Entry<String, Integer> entry : sortedMap.entrySet()) {
+            embedBuilder.addField(entry.getKey() , "Plays: " + entry.getValue() , false);
+        }
+
+
 
         return message.getChannel().flatMap(channel -> channel.createMessage(embedBuilder.build()));
     }
@@ -632,9 +815,17 @@ public class SpongeyBot {
                                         return helpCommand(message);
                                     }
 
-                                    if (message.getContent().equalsIgnoreCase("$testing")) {
-                                        return getScrobblesInWeek(objectMapper, httpClient, message);
+                                    if (message.getContent().startsWith("$scrobbles")) {
+                                        try {
+                                            return getScrobblesInTimeframe(objectMapper, httpClient, message);
+                                        } catch (JsonProcessingException e) {
+                                            throw new RuntimeException(e);
+                                        }
                                     }
+
+                                 /*   if (message.getContent().equalsIgnoreCase("$update")) {
+                                        return updateCommand(objectMapper, httpClient, message, client);
+                                    }*/
 
                                     return Mono.empty();
                                 }))
