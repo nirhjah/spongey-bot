@@ -14,8 +14,12 @@ import discord4j.core.GatewayDiscordClient;
 import discord4j.core.event.domain.message.MessageCreateEvent;
 import discord4j.core.object.entity.Message;
 
+
+import discord4j.core.object.presence.ClientActivity;
+import discord4j.core.object.presence.ClientPresence;
 import discord4j.core.spec.EmbedCreateSpec;
 import discord4j.rest.util.Color;
+import discord4j.rest.util.Image;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.impl.client.CloseableHttpClient;
@@ -24,8 +28,11 @@ import org.bson.Document;
 import org.bson.conversions.Bson;
 import reactor.core.publisher.Mono;
 
-import java.io.IOException;
+
+import java.io.*;
+import java.net.*;
 import java.time.*;
+import java.time.temporal.TemporalAdjusters;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -472,7 +479,183 @@ public class SpongeyBot {
     }
 
 
-    static Mono<?> getYearlyInfo(ObjectMapper objectMapper, CloseableHttpClient httpClient, Message message) throws JsonProcessingException {
+    static Mono<?> getDailyListeningTime(ObjectMapper objectMapper, CloseableHttpClient httpClient, Message message) throws JsonProcessingException, UnsupportedEncodingException {
+
+
+        String[] command = message.getContent().split(" ");
+
+        System.out.println("this is msg: " + command);
+
+        String timePeriod = "";
+        if (command.length >= 2) {
+            timePeriod = command[1];
+            System.out.println("timePeriod: " + timePeriod);
+        } else {
+            return message.getChannel().flatMap(channel -> channel.createMessage("Valid commands: $time 2023, $time 2022, $time today, $time currentweek, $time lastweek, $time month etc"));
+
+        }
+
+
+        MongoClient mongoClient = MongoClients.create(connectionString);
+        MongoDatabase database = mongoClient.getDatabase("spongeybot");
+        MongoCollection<Document> userCollection = database.getCollection("users");
+        MongoCollection<Document> scrobblesCollection = database.getCollection("scrobbles");
+
+        Document userDocument = userCollection.find(Filters.eq("userid", message.getAuthor().get().getId().asLong())).first();
+
+        ZoneId userTimeZone = ZoneId.of(userDocument.getString("timezone"));
+
+        int listeningTime = 0;
+
+        int totalTrackslistenedto = 0;
+        Bson filter = Filters.all("userId", message.getAuthor().get().getId().asLong());
+
+
+        //if command is 'today'
+        ZonedDateTime currentTimeInTimezone = ZonedDateTime.now(userTimeZone);
+
+
+        ZonedDateTime lastMinuteOfPeriod = null;
+        ZonedDateTime firstMinuteOfPeriod = null;
+
+
+        if (timePeriod.equals("today")) {
+
+            lastMinuteOfPeriod = currentTimeInTimezone
+                    .with(LocalDateTime.of(currentTimeInTimezone.toLocalDate(), LocalTime.MAX));
+
+            firstMinuteOfPeriod = currentTimeInTimezone
+                    .with(LocalDateTime.of(currentTimeInTimezone.toLocalDate(), LocalTime.MIDNIGHT));
+
+
+
+
+        } else if (timePeriod.equals("currentweek")) {
+
+            firstMinuteOfPeriod = currentTimeInTimezone
+                    .with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+                    .with(LocalTime.MIDNIGHT);
+
+            lastMinuteOfPeriod = currentTimeInTimezone
+                    .with(TemporalAdjusters.next(DayOfWeek.SUNDAY))
+                    .with(LocalTime.MAX);
+
+            
+        }  else if (timePeriod.equals("lastweek")) {
+
+            firstMinuteOfPeriod = currentTimeInTimezone
+                    .with(TemporalAdjusters.previousOrSame(DayOfWeek.SUNDAY))
+                    .minusDays(6)
+                    .with(LocalTime.MIDNIGHT);
+
+            lastMinuteOfPeriod = currentTimeInTimezone
+                    .with(TemporalAdjusters.previousOrSame(DayOfWeek.SUNDAY))
+                    .with(LocalTime.MAX);
+
+        } else if (timePeriod.equals("2023")) {
+
+            firstMinuteOfPeriod = currentTimeInTimezone
+                    .with(TemporalAdjusters.firstDayOfYear())
+                    .with(LocalTime.MIDNIGHT);
+
+            lastMinuteOfPeriod = currentTimeInTimezone
+                    .with(TemporalAdjusters.lastDayOfYear())
+                    .with(LocalTime.MAX);
+
+        }
+
+        else {
+            return message.getChannel().flatMap(channel -> channel.createMessage("Valid commands: $time 2023, $time 2022, $time today, $time week, $time month etc"));
+
+        }
+
+
+
+        System.out.println("This is first minute: " + firstMinuteOfPeriod);
+        System.out.println("This is last minute: " +  lastMinuteOfPeriod);
+
+        long utsStartOfPeriod = firstMinuteOfPeriod.toInstant().getEpochSecond();
+
+        long utsEndOfPeriod = lastMinuteOfPeriod.toInstant().getEpochSecond();
+
+
+
+        System.out.println(utsStartOfPeriod);
+        System.out.println(utsEndOfPeriod);
+
+
+
+        //looping through all scroblbles for user
+        for (Document doc : scrobblesCollection.find(filter)) {
+
+            JsonNode jsonNode = objectMapper.readTree(doc.get("jsonData").toString());
+
+            for (JsonNode track : jsonNode) {
+
+                long dateNode = Integer.parseInt(track.get("date").get("uts").asText());
+
+                //if datenode is bigger than utsstartoday AND datenode smaller than utsendofday
+
+
+                if (dateNode > utsStartOfPeriod && dateNode < utsEndOfPeriod) {
+                    totalTrackslistenedto += 1;
+                    //get duration of track in seconds
+                    //for this get trackname, artistname
+
+                    String artistName = track.get("artist").get("#text").asText();
+
+                    String trackName = track.get("name").asText();
+
+                    System.out.println("this is artistname and trackname: " + artistName + " track: " + trackName + "listened on: " + dateNode);
+
+                    if (Objects.equals(trackName, "let me calm down (feat. j. cole)")) {
+                        System.out.println("skipping this cuz it no work for this track idk why");
+                        continue;
+                    }
+
+
+                    String encodedArtistName = URLEncoder.encode(artistName, "UTF-8");
+                    String encodedTrackName = URLEncoder.encode(trackName, "UTF-8");
+
+
+                     String trackInfoUrl =  "http://ws.audioscrobbler.com/2.0/?method=track.getInfo&api_key=" + API_KEY +  "&artist=" + encodedArtistName + "&track=" + encodedTrackName + "&format=json";
+                    System.out.println("This is url: " + trackInfoUrl);
+                    JsonNode rootNode = getJsonNodeFromUrl(objectMapper, trackInfoUrl, httpClient, message);
+                    int trackDurationSeconds = Integer.parseInt(rootNode.get("track").get("duration").asText())/1000 ;
+                    if (trackDurationSeconds == 0) {
+                        System.out.println("no duration so assume 2.75 mins");
+                        trackDurationSeconds = 165;
+                    }
+                    listeningTime += trackDurationSeconds;
+                    System.out.println("This is track duration as it was : " + rootNode.get("track").get("duration").asText());
+
+                    System.out.println("This is track duration secs: " + trackDurationSeconds);
+
+
+
+                }
+
+
+
+            }
+
+
+        }
+
+
+        System.out.println(userTimeZone);
+        System.out.println("this is time for period " + timePeriod + ": " + listeningTime);
+
+
+        int finalListeningTime = listeningTime;
+        int finalTotalTrackslistenedto = totalTrackslistenedto;
+        String finalTimePeriod = timePeriod;
+        ZonedDateTime finalFirstMinuteOfPeriod = firstMinuteOfPeriod;
+        ZonedDateTime finalLastMinuteOfPeriod = lastMinuteOfPeriod;
+        return message.getChannel().flatMap(channel -> channel.createMessage("Time spent listening to music for " + finalTimePeriod + ": " + finalListeningTime /60 + " minutes, and total tracks listened to: " + finalTotalTrackslistenedto + "\n this is between " + finalFirstMinuteOfPeriod + " and " + finalLastMinuteOfPeriod));
+    }
+
+        static Mono<?> getYearlyInfo(ObjectMapper objectMapper, CloseableHttpClient httpClient, Message message) throws JsonProcessingException {
 
         String[] command = message.getContent().split(" ");
 
@@ -1056,8 +1239,58 @@ public class SpongeyBot {
                 });
     }
 
+    static Mono<?> updateBotPic(Message message, ObjectMapper objectMapper, CloseableHttpClient httpClient, GatewayDiscordClient client, MessageCreateEvent event) throws IOException {
 
-    static Mono<?> loginCommand(Message message, ObjectMapper objectMapper, CloseableHttpClient httpClient, GatewayDiscordClient client) {
+        //Getting current day
+        String day = LocalDate.now().getDayOfWeek().name();
+
+        System.out.println("THis is day: " + day);
+
+        MongoClient mongoClient = MongoClients.create(connectionString);
+        MongoDatabase database = mongoClient.getDatabase("spongeybot");
+        MongoCollection<Document> collection = database.getCollection("users");
+
+
+        //getting user who is featured today
+        Bson filter = Filters.all("featuredDay", day);
+        Document featuredUserDocument = collection.find(filter).first();
+
+
+
+        //getting above users top weekly album
+
+        String userSessionKey = (String) featuredUserDocument.get("sessionkey");
+
+        long userId = featuredUserDocument.getLong("userid");
+
+        String url = BASE_URL + "?method=user.gettopalbums&api_key=" + API_KEY + "&sk=" + userSessionKey  + "&limit=1" + "&period=7day" + "&format=json";
+        System.out.println(url);
+        JsonNode rootNode =  getJsonNodeFromUrl(objectMapper, url, httpClient, message);
+        JsonNode albumNode = rootNode.path("topalbums").path("album");
+        String firstAlbumNode = albumNode.get(0).path("image").get(2).path("#text").asText();
+        System.out.println("album image: " + firstAlbumNode);
+
+        //Get username
+        String username = client.getUserById(Snowflake.of(userId))
+                .block()
+                .getUsername();
+
+        //set it to the bot picture
+        Image image = Image.ofUrl(firstAlbumNode).block();
+
+
+        event.getClient().edit().withAvatar(image).block();
+
+        client.updatePresence(ClientPresence.online(ClientActivity.playing(username + "'s top album of the week!"))).block();
+
+
+
+        return message.getChannel().flatMap(channel -> channel.createMessage(username + " is today's featured user :D"));
+
+    }
+
+
+        static Mono<?> loginCommand(Message message, ObjectMapper objectMapper, CloseableHttpClient httpClient, GatewayDiscordClient client) {
 
         MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
@@ -1085,8 +1318,6 @@ public class SpongeyBot {
                         String requestAuthUrl = "http://www.last.fm/api/auth/?api_key=" + API_KEY + "&token=" + token;
 
 
-
-                        System.out.println("this islogin link for chloe: " + requestAuthUrl);
                         EmbedCreateSpec.Builder embedBuilder = createEmbed("Login to last.fm").addField("Login here: ", requestAuthUrl, false);
 
 
@@ -1154,7 +1385,6 @@ public class SpongeyBot {
         client.on(MessageCreateEvent.class)
                                 .flatMap(event -> {
                                     Message message = event.getMessage();
-
                                     if (message.getContent().startsWith("$scrobblelb")) {
                                         return scrobbleLbCommand(message,objectMapper, httpClient, client);
                                     }
@@ -1204,19 +1434,40 @@ public class SpongeyBot {
                                         }
                                     }
 
-                                    if (message.getContent().equalsIgnoreCase("$test")){
+                                    if (message.getContent().equalsIgnoreCase("$updaterecent")){
                                         try {
                                             return updateRecentCommand(objectMapper, httpClient, message, client);
                                         } catch (JsonProcessingException e) {
                                             throw new RuntimeException(e);
                                         }
-                                        // eturn deleteViperfan();
                                     }
 
                                     if (message.getContent().equalsIgnoreCase("$chunks")) {
                                         try {
                                             return getChunksCommand(objectMapper, httpClient, message, client);
                                         } catch (JsonProcessingException e) {
+                                            throw new RuntimeException(e);
+                                        }
+                                    }
+
+                                    if (message.getContent().startsWith("$time")) {
+                                        try {
+                                            return getDailyListeningTime(objectMapper, httpClient, message);
+                                        } catch (JsonProcessingException e) {
+                                            throw new RuntimeException(e);
+                                        } catch (UnsupportedEncodingException e) {
+                                            throw new RuntimeException(e);
+                                        }
+                                    }
+
+
+
+
+
+                                    if (message.getContent().startsWith("$pic")) {
+                                        try {
+                                            return updateBotPic(message,objectMapper, httpClient, client, event);
+                                        } catch (IOException e) {
                                             throw new RuntimeException(e);
                                         }
                                     }
@@ -1236,3 +1487,19 @@ public class SpongeyBot {
                 .block();
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
