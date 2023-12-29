@@ -2,12 +2,8 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.mongodb.client.MongoClient;
-import com.mongodb.client.MongoClients;
-import com.mongodb.client.MongoCollection;
-import com.mongodb.client.MongoDatabase;
+import com.mongodb.client.*;
 import com.mongodb.client.model.Filters;
-import com.mongodb.client.model.Updates;
 import discord4j.common.util.Snowflake;
 import discord4j.core.DiscordClient;
 import discord4j.core.GatewayDiscordClient;
@@ -34,9 +30,9 @@ import java.net.*;
 import java.time.*;
 import java.time.temporal.TemporalAdjusters;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
-import static com.mongodb.client.model.Filters.lt;
 
 
 public class SpongeyBot {
@@ -154,337 +150,420 @@ public class SpongeyBot {
         return chunks;
     }
 
-    static Mono<?> deleteByUser() {
+
+    static Mono<?> testUsername(GatewayDiscordClient client) throws JsonProcessingException, UnsupportedEncodingException {
         MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
-        MongoCollection<Document> collection = database.getCollection("scrobbles");
-        Bson query = lt("userId", 559929980705046529L);
 
-        collection.deleteMany(query);
-        System.out.println("deletded");
-        return Mono.empty();
-
-    }
-
-
-    static Mono<?> getChunksCommand(ObjectMapper objectMapper, CloseableHttpClient httpClient, Message message, GatewayDiscordClient client) throws JsonProcessingException {
-        MongoClient mongoClient = MongoClients.create(connectionString);
-        MongoDatabase database = mongoClient.getDatabase("spongeybot");
-        MongoCollection<Document> collection = database.getCollection("scrobbles");
         MongoCollection<Document> users = database.getCollection("users");
-
-        //updating for user who typed command
-        Bson filter = Filters.all("userId", 176505480011710464L);
-
-        int latestTimestamp = 0;
-        String artistName = "";
-        int docNumber = 0;
-        int totalChunksForReference = 0;
-
-
-
-        for (Document doc : collection.find(filter)) {
-            JsonNode jsonNode = objectMapper.readTree(doc.get("jsonData").toString());
-            System.out.println("This is a chunk: " + doc.get("chunkIndex").toString() );
-
-
-            for (JsonNode track : jsonNode) {
-
-                int dateNode = Integer.parseInt(track.get("date").get("uts").asText());
-                if (dateNode > latestTimestamp) {
-                    latestTimestamp = dateNode;
-                    artistName = track.get("artist").get("#text").asText();
-                    docNumber = Integer.parseInt(doc.get("chunkIndex").toString());
-
-                }
-            }
-
-
-        }
-        //then manually add a latesttimestamp field for all users in the users collection
-        //then just grab that
-        System.out.println("Latest  timestamp: " + latestTimestamp);
-        System.out.println("Latest  artist: " + artistName);
-        System.out.println("and htis is the chunk we are on: " + docNumber);
-        System.out.println("total chunk counts: " + totalChunksForReference);
-        return Mono.empty();
-    }
-
-    static Mono<?> updateRecentCommand(ObjectMapper objectMapper, CloseableHttpClient httpClient, Message message, GatewayDiscordClient client) throws JsonProcessingException {
-        MongoClient mongoClient = MongoClients.create(connectionString);
-        MongoDatabase database = mongoClient.getDatabase("spongeybot");
-        MongoCollection<Document> collection = database.getCollection("scrobbles");
-        MongoCollection<Document> users = database.getCollection("users");
-
-        message.getChannel().flatMap(channel -> channel.createMessage("Currently updating all users tracks"));
 
         for (Document document : users.find()) {
-
-            String sessionKey = document.getString("sessionkey");
             long userId = document.getLong("userid");
 
 
-
-            int usersLatestTimestamp = Integer.parseInt(document.getString("latestTimestamp"));
-
-            if (usersLatestTimestamp == 0) {
-                System.out.println("no timestamp set for user: " + userId);
-                continue;
-
-            }
-
-
-            int usersLatestChunk = (int) document.get("latestChunk");
-
-
-
-
-                String username = client.getUserById(Snowflake.of(userId))
+            String username = client.getUserById(Snowflake.of(userId))
                     .block()
                     .getUsername();
-            System.out.println("Now updating user: " + userId + " username: " + username);
-
-            String getRecentUserTracksUrl = BASE_URL + "?method=user.getrecenttracks&limit=200&api_key=" + API_KEY + "&sk=" + sessionKey + "&format=json";
-            System.out.println("recent tracksu rl: " + getRecentUserTracksUrl);
-
-            ArrayNode mergedResult = objectMapper.createArrayNode();
 
 
-            //GETTING TOTAL PAGES WE HAVE NOW
-            JsonNode rootNode = null;
-            int totalPages = 0;
-            try {
-                rootNode =  getJsonNodeFromUrl(objectMapper, getRecentUserTracksUrl, httpClient, message);
-                totalPages = Integer.parseInt(rootNode.path("recenttracks").path("@attr").path("totalPages").asText());
-                System.out.println(" total pages: " + totalPages);
+            System.out.println("this is user: " + userId + " username: " + username);
 
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
+            MongoCollection<Document> userScrobblesCollection = database.getCollection(username);
+            System.out.println("total scrobbles: " + userScrobblesCollection.countDocuments());
 
 
+        }
 
-            //getting all tracks after timestamp from latestsavedpage to now
-            List<Integer> listOfTimeStamps = new ArrayList<>();
-            ArrayNode tracksToProcess = new ObjectMapper().createArrayNode();
 
-            outerLoop:
-            for (int i = 1; i <= totalPages; i++) {
+        return Mono.empty();
 
-                String urlPerPage = BASE_URL + "?method=user.getrecenttracks&limit=200&page=" + i + "&api_key=" + API_KEY + "&sk=" + sessionKey + "&format=json";
-                JsonNode pageNode = getJsonNodeFromUrl(objectMapper, urlPerPage, httpClient, message);
-             //   ArrayNode tracksToProcess = new ObjectMapper().createArrayNode();
-                JsonNode listOfTracksForGivenPage = pageNode.get("recenttracks").get("track");
-                JsonNode firstTrackNode = listOfTracksForGivenPage.get(0);
-                System.out.println("This is users latest timestamp: " + usersLatestTimestamp);
-                //1701228262 spongey
-                for (JsonNode track : listOfTracksForGivenPage) {
+    }
+
+        static Mono<?> betterupdaterecentcommand(ObjectMapper objectMapper, CloseableHttpClient httpClient, Message message, GatewayDiscordClient client) throws JsonProcessingException, UnsupportedEncodingException {
+        MongoClient mongoClient = MongoClients.create(connectionString);
+        MongoDatabase database = mongoClient.getDatabase("spongeybot");
+        MongoCollection<Document> tracks = database.getCollection("tracks");
+            MongoCollection<Document> users = database.getCollection("users");
+
+
+        //wrap from here
+
+            for (Document document : users.find()) {
+                long userId = document.getLong("userid");
+                String sessionKey = document.getString("sessionkey");
+
+                if (userId == 176505480011710464L) {
+                    System.out.println("this is viperfan so we skip cuz we dont have his tracks yet");
+                    continue;  // Skip this document and move to the next iteration
+                }
+
+                String username = client.getUserById(Snowflake.of(userId))
+                        .block()
+                        .getUsername();
+                System.out.println("Now updating recent of user: " + userId + " username: " + username);
+
+                 MongoCollection<Document> userScrobblesCollection = database.getCollection(username);
+
+
+
+
+
+                Document documentWithMaxTimestamp = null;
+                int maxTimestamp = 0;
+
+                FindIterable<Document> documents = userScrobblesCollection.find();
+                for (Document doc : documents) {
+                    // Get the timestamp from the current document
+                    int timestamp = doc.getInteger("timestamp");
+
+                    // Check if the current timestamp is greater than the maximum
+                    if (timestamp > maxTimestamp) {
+                        maxTimestamp = timestamp;
+                        documentWithMaxTimestamp = doc;
+                    }
+                }
+
+                System.out.println("Max timestamp: " + maxTimestamp);
+                System.out.println(documentWithMaxTimestamp);
+
+
+
+                //GETTING TOTAL PAGES WE HAVE NOW
+                JsonNode rootNode = null;
+                int totalPages = 0;
+                String getRecentUserTracksUrl = BASE_URL + "?method=user.getrecenttracks&limit=200&api_key=" + API_KEY + "&sk=" + sessionKey + "&format=json";
+
+                try {
+                    rootNode =  getJsonNodeFromUrl(objectMapper, getRecentUserTracksUrl, httpClient, message);
+                    totalPages = Integer.parseInt(rootNode.path("recenttracks").path("@attr").path("totalPages").asText());
+                    System.out.println(" total pages: " + totalPages);
+
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+
+
+
+
+
+
+                outerLoop:
+                for (int i = 1; i <= totalPages; i++) {
+
+                    String urlPerPage = BASE_URL + "?method=user.getrecenttracks&limit=200&page=" + i + "&api_key=" + API_KEY + "&sk=" + sessionKey + "&format=json";
+                    JsonNode pageNode = getJsonNodeFromUrl(objectMapper, urlPerPage, httpClient, message);
+                    JsonNode listOfTracksForGivenPage = pageNode.get("recenttracks").get("track");
+
+                    for (JsonNode track : listOfTracksForGivenPage) {
 
                         if (track.has("@attr") && track.get("@attr").has("nowplaying")
-                        && track.get("@attr").get("nowplaying").asText().equals("true")) {
-                    System.out.println("skipping over this song ebcaues its a nowplaying so doesnt have atime");
-                    continue ;
-                }
+                                && track.get("@attr").get("nowplaying").asText().equals("true")) {
+                            System.out.println("skipping over this song ebcaues its a nowplaying so doesnt have atime");
+                            continue ;
+                        }
 
-                    if (Integer.parseInt(track.get("date").get("uts").asText()) > usersLatestTimestamp) {
-                    //this is if track isnt a nowplaying and date of track is bigger than latesttimestamp
-                        System.out.println("This is a new track: " + track);
-                        listOfTimeStamps.add(Integer.parseInt(track.get("date").get("uts").asText()));
-                        System.out.println("This is new tracks timestamp: " + Integer.parseInt(track.get("date").get("uts").asText()));
-                        tracksToProcess.add(track);
+                        if (Integer.parseInt(track.get("date").get("uts").asText()) > maxTimestamp) {
+                            //this is if track isnt a nowplaying and date of track is bigger than latesttimestamp
+                            System.out.println("This is a new track: " + track);
+                            System.out.println("This is new tracks timestamp: " + Integer.parseInt(track.get("date").get("uts").asText()));
+
+                            System.out.println(track);
 
 
-                    } else if (Integer.parseInt(track.get("date").get("uts").asText())  < usersLatestTimestamp) {
-                        System.out.println("already got this i think so move on");
-                        break outerLoop;
+
+                            String artist = track.get("artist").get("#text").asText();
+                            String trackName = track.get("name").asText();
+
+
+                            //first check if track alr saved in tracks table with duration
+                            Document foundTrack = tracks.find(
+                                    Filters.and(
+                                            Filters.eq("track", trackName),
+                                            Filters.eq("artist", artist)
+                                    )
+                            ).maxTime(2, TimeUnit.HOURS).first();
+
+                            String album = track.get("album").get("#text").asText();
+                            String trackUrl = track.get("url").asText();
+                            String albumUrl = track.get("image").get(2).path("#text").asText();
+                            int timestamp = Integer.parseInt(track.get("date").get("uts").asText());
+
+                            int duration;
+
+//this is for saving songs
+
+                            if (foundTrack != null) {
+                                duration = Integer.parseInt(foundTrack.get("duration").toString());
+                                System.out.println("Found track");
+                            } else {
+                                System.out.println("Track not found so add into tracks db");
+
+
+                                String encodedArtistName = URLEncoder.encode(artist, "UTF-8");
+                                String encodedTrackName = URLEncoder.encode(trackName, "UTF-8");
+
+                                String trackInfoUrl =  "http://ws.audioscrobbler.com/2.0/?method=track.getInfo&api_key=" + API_KEY +  "&artist=" + encodedArtistName + "&track=" + encodedTrackName + "&format=json";
+                                System.out.println("Get duration url: " + trackInfoUrl);
+                                JsonNode thisNode = getJsonNodeFromUrl(objectMapper, trackInfoUrl, httpClient, message);
+                                System.out.println("track node: " + thisNode.get("track"));
+                                int trackDurationSeconds = Integer.parseInt(thisNode.get("track").get("duration").asText())/1000 ;
+                                if (trackDurationSeconds == 0) {
+                                    trackDurationSeconds = 165;
+                                }
+
+
+                                Document newTrack = new Document("track", trackName)
+                                        .append("artist", artist)
+                                        .append("duration", trackDurationSeconds);
+
+                                tracks.insertOne(newTrack);
+
+                                duration = trackDurationSeconds;
+                            }
+
+
+
+
+
+
+                            Document scrobbleDoc = new Document("userId", userId)
+                                    .append("track", trackName)
+                                    .append("artist", artist)
+                                    .append("album", album)
+                                    .append("duration", duration)
+                                    .append("timestamp", timestamp)
+                                    .append("albumLink", albumUrl)
+                                    .append("trackLink", trackUrl);
+
+                            System.out.println("NEW DOC WE ARE ADDING: " + scrobbleDoc);
+
+                            userScrobblesCollection.insertOne(scrobbleDoc);
+
+                        } else if (Integer.parseInt(track.get("date").get("uts").asText())  < maxTimestamp) {
+                            System.out.println("already got this i think so move on");
+                            break outerLoop;
+                        }
+
                     }
 
+
                 }
 
 
-            }
-
-            mergedResult.addAll((ArrayNode) tracksToProcess);
-
-            System.out.println("this is mergedresult: " + mergedResult);
-            System.out.println("this is tarckstoprocess: " + tracksToProcess);
 
 
+                long totalDocuments = userScrobblesCollection.countDocuments();
 
-            //geting latesttimestamp and latestchunk
-
-
-
-            //now saving the chunks
-
-            List<JsonNode> chunks = splitJsonArrayIntoChunks(mergedResult, 1000);
-            Collections.reverse(chunks);
-            int gettingLastChunk = usersLatestChunk;
-            for (int i = 0; i < chunks.size(); i++) {
-                gettingLastChunk++;
-                System.out.println("This is gettinglastchunk in the loop: " + gettingLastChunk);
-            }
-            System.out.println("This is users latest chunk: " +  usersLatestChunk);
-            for (int i = 0; i < chunks.size(); i++) {
-                gettingLastChunk++;
-                System.out.println("this is gettinglastchunk: " + gettingLastChunk);
-                String chunkString = chunks.get(i).toString();
-
-                Document dataDocument = new Document("userId", userId)
-                        .append("chunkIndex", i)
-                        .append("latestPage", "1")
-                        .append("jsonData", chunkString);
-
-                MongoCollection<Document> jsonDataCollection = database.getCollection("scrobbles");
-                jsonDataCollection.insertOne(dataDocument);
-            }
-
-            if (listOfTimeStamps.size() > 0) {
-                //gettingLastChunk is the latestchunk now
-                System.out.println("This is the users latesttimestamp: " + listOfTimeStamps.get(0));
-                System.out.println("This is the users latestchunk: " + gettingLastChunk);
+                System.out.println("Total docs now for " + username  + totalDocuments);
 
 
-                users.updateOne(
-                        Filters.eq("userid", userId),
-                        Updates.combine(
-                                Updates.set("latestTimestamp", listOfTimeStamps.get(0).toString()),
-                                Updates.set("latestChunk", gettingLastChunk)
-                        )
-                );
-
-                System.out.println("Successfully re-updated user: " + userId);
-
-            }
-            else {
-                System.out.println("Your account is already up to date silly billy");
             }
 
 
 
 
 
-
-       }
-
+        //to here
 
 
 
-        message.getChannel().flatMap(channel -> channel.createMessage("Finished updating users data"));
+        return Mono.empty();
+
+    }
 
 
-            //loop through all usersi ntead
+    static Mono<?> betterUpdateCommand(ObjectMapper objectMapper, CloseableHttpClient httpClient, Message message, GatewayDiscordClient client) throws UnsupportedEncodingException {
+        MongoClient mongoClient = MongoClients.create(connectionString);
+        MongoDatabase database = mongoClient.getDatabase("spongeybot");
+        MongoCollection<Document> tracks = database.getCollection("tracks");
+        MongoCollection<Document> userScrobblesCollection = database.getCollection("emperormeznik"); //todo change
 
+
+
+
+        long userId = 559929980705046529L; //THISIS MEZ
+        String sessionKey = "c07moFTuUJON8XXZxhtZYsu5TGfxqo9Q"; //todo chnage, currenlty spongey
+
+
+
+        //getting total num of pages
+
+        String getRecentUserTracksUrl = BASE_URL + "?method=user.getrecenttracks&limit=200&api_key=" + API_KEY + "&sk=" + sessionKey + "&format=json";
+        System.out.println("recent tracksu rl: " + getRecentUserTracksUrl);
+
+
+        JsonNode rootNode = null;
+        int totalPages = 0;
+        try {
+            rootNode =  getJsonNodeFromUrl(objectMapper, getRecentUserTracksUrl, httpClient, message);
+            totalPages = Integer.parseInt(rootNode.path("recenttracks").path("@attr").path("totalPages").asText());
+            System.out.println(" total pages: " + totalPages);
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        //todo change i to whatever number it crashes
+        for (int i = 1; i <= totalPages; i++) {
+            String urlPerPage = BASE_URL + "?method=user.getrecenttracks&limit=200&page=" + i + "&api_key=" + API_KEY + "&sk=" + sessionKey + "&format=json";
+            JsonNode pageNode = getJsonNodeFromUrl(objectMapper, urlPerPage, httpClient, message);
+
+            JsonNode listOfTracksForGivenPage = pageNode.get("recenttracks").get("track");
+
+            for (JsonNode track : listOfTracksForGivenPage) {
+                if (!(track.has("@attr") && track.get("@attr").has("nowplaying")
+                        && track.get("@attr").get("nowplaying").asText().equals("true"))) {
+
+
+
+
+                    // create scrobble object and add it to collection
+
+
+                    System.out.println("making a scrobble: ");
+
+                    String artist = track.get("artist").get("#text").asText();
+                    String trackName = track.get("name").asText();
+
+
+                    //first check if track alr saved in tracks table with duration
+                    Document foundTrack = tracks.find(
+                            Filters.and(
+                                    Filters.eq("track", trackName),
+                                    Filters.eq("artist", artist)
+                            )
+                    ).maxTime(2, TimeUnit.HOURS).first();
+
+                    String album = track.get("album").get("#text").asText();
+                    String trackUrl = track.get("url").asText();
+                    String albumUrl = track.get("image").get(2).path("#text").asText();
+                    int timestamp = Integer.parseInt(track.get("date").get("uts").asText());
+
+                    int duration;
+
+//this is for saving songs
+
+                    if (foundTrack != null) {
+                        duration = Integer.parseInt(foundTrack.get("duration").toString());
+                        System.out.println("Found track");
+                    } else {
+                        System.out.println("Track not found so add into tracks db");
+
+
+                        String encodedArtistName = URLEncoder.encode(artist, "UTF-8");
+                        String encodedTrackName = URLEncoder.encode(trackName, "UTF-8");
+
+                        String trackInfoUrl = "http://ws.audioscrobbler.com/2.0/?method=track.getInfo&api_key=" + API_KEY + "&artist=" + encodedArtistName + "&track=" + encodedTrackName + "&format=json";
+                        System.out.println("Get duration url: " + trackInfoUrl);
+                        JsonNode thisNode = getJsonNodeFromUrl(objectMapper, trackInfoUrl, httpClient, message);
+                        System.out.println("track node: " + thisNode.get("track"));
+                        int trackDurationSeconds = Integer.parseInt(thisNode.get("track").get("duration").asText()) / 1000;
+                        if (trackDurationSeconds == 0) {
+                            trackDurationSeconds = 165;
+                        }
+
+
+                        Document newTrack = new Document("track", trackName)
+                                .append("artist", artist)
+                                .append("duration", trackDurationSeconds);
+
+                        tracks.insertOne(newTrack);
+
+                        duration = trackDurationSeconds;
+                    }
+
+
+                    Document scrobbleDoc = new Document("userId", userId)
+                            .append("track", trackName)
+                            .append("artist", artist)
+                            .append("album", album)
+                            .append("duration", duration)
+                            .append("timestamp", timestamp)
+                            .append("albumLink", albumUrl)
+                            .append("trackLink", trackUrl);
+
+                    userScrobblesCollection.insertOne(scrobbleDoc);
+                    System.out.println("Finished processing track: " + track);
+
+                } else {
+                    System.out.println("Track currently playing so not proccessing this " + track);
+                }
+
+            }
+
+
+            System.out.println("we have just finished page: " + i);
+            System.out.println("This is url for the page we just finished " + i + ": " + urlPerPage);
+        }
 
         return Mono.empty();
     }
 
-
-
-
-    static Mono<?> updateCommand(ObjectMapper objectMapper, CloseableHttpClient httpClient, Message message, GatewayDiscordClient client) {
-
+    static Mono<?> testingbetterupdatecommand(ObjectMapper objectMapper, CloseableHttpClient httpClient, Message message, GatewayDiscordClient client) {
 
         MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
+        MongoCollection<Document> userScrobblesCollection = database.getCollection("_spongey");
 
 
 
 
-        long userId = 176505480011710464L;
-        String sessionKey = "WFNgvAF0iiLZ5PET1i82Da8XLNXkKUi8";
-
-        String username = client.getUserById(Snowflake.of(userId))
-                .block()
-                .getUsername();
+        long totalDocuments = userScrobblesCollection.countDocuments();
+        System.out.println("Total number of documents: " + totalDocuments);
 
 
-            System.out.println("Now updating user: " + userId + " username: " + username);
+        Document documentWithMaxTimestamp = null;
+        int maxTimestamp = 0;
 
+        List<Scrobble> scrobls = new ArrayList<>();
 
+        FindIterable<Document> documents = userScrobblesCollection.find();
+        for (Document document : documents) {
+            // Get the timestamp from the current document
+            int timestamp = document.getInteger("timestamp");
 
-            String getRecentUserTracksUrl = BASE_URL + "?method=user.getrecenttracks&limit=200&api_key=" + API_KEY + "&sk=" + sessionKey + "&format=json";
-            System.out.println("recent tracksu rl: " + getRecentUserTracksUrl);
-
-            ArrayNode mergedResult = objectMapper.createArrayNode();
-
-            JsonNode rootNode = null;
-            int totalPages = 0;
-            try {
-                rootNode =  getJsonNodeFromUrl(objectMapper, getRecentUserTracksUrl, httpClient, message);
-                totalPages = Integer.parseInt(rootNode.path("recenttracks").path("@attr").path("totalPages").asText());
-                System.out.println(" total pages: " + totalPages);
-
-            } catch (Exception e) {
-                e.printStackTrace();
+            // Check if the current timestamp is greater than the maximum
+            if (timestamp > maxTimestamp) {
+                maxTimestamp = timestamp;
+                documentWithMaxTimestamp = document;
             }
 
+            Scrobble scrobble = Scrobble.fromDocument(document);
+            scrobls.add(scrobble);
+        }
 
-            int latestPage = 1;
-            for (int i = 1; i <= totalPages; i++) {
-                String urlPerPage = BASE_URL + "?method=user.getrecenttracks&limit=200&page=" + i + "&api_key=" + API_KEY + "&sk=" + sessionKey + "&format=json";
-                JsonNode pageNode = getJsonNodeFromUrl(objectMapper, urlPerPage, httpClient, message);
-                ArrayNode tracksToProcess = new ObjectMapper().createArrayNode();
+        System.out.println(" scrobble size: " + scrobls.size());
 
-                JsonNode listOfTracksForGivenPage = pageNode.get("recenttracks").get("track");
-                JsonNode firstTrackNode = listOfTracksForGivenPage.get(0);
-
-                for (JsonNode track : listOfTracksForGivenPage) {
-                    if (!(firstTrackNode.has("@attr") && firstTrackNode.get("@attr").has("nowplaying")
-                            && firstTrackNode.get("@attr").get("nowplaying").asText().equals("true"))) {
-
-                        tracksToProcess.add(track);
-
-                    }
-                }
+        Collections.sort(scrobls, Comparator.comparingLong(Scrobble::getTimestamp));
 
 
-                System.out.println("we on page: " + i);
-                System.out.println("This is url for page " + i + ": " + urlPerPage);
-                mergedResult.addAll((ArrayNode) tracksToProcess);
-                latestPage = i;
-            }
+        System.out.println("Max timestamp: " + maxTimestamp);
+        System.out.println(documentWithMaxTimestamp);
 
 
+        int size = scrobls.size();
+
+        int startIndex = Math.max(0, size - 10);  // Ensure startIndex is not negative
+
+        List<Scrobble> lastTenScrobbles = scrobls.subList(startIndex, size);
+
+// Print the last 5 scrobbles
+        for (Scrobble scrobble : lastTenScrobbles) {
+            System.out.println(scrobble);
+        }
 
 
-
-//DO THIS NEXT
-            //after mergedresult done
-
-
-            List<JsonNode> chunks = splitJsonArrayIntoChunks(mergedResult, 1000);
-            Collections.reverse(chunks);
-            for (int i = 0; i < chunks.size(); i++) {
-                String chunkString = chunks.get(i).toString();
-
-                Document dataDocument = new Document("userId", userId)
-                        .append("chunkIndex", i)
-                        .append("latestPage", latestPage)
-                        .append("jsonData", chunkString);
-
-                MongoCollection<Document> jsonDataCollection = database.getCollection("scrobbles");
-                jsonDataCollection.insertOne(dataDocument);
-            }
-
-            System.out.println("Successfully updated user: " + userId);
-            System.out.println("latest page is: " + latestPage);
-
-
-
-
-        return message.getChannel().flatMap(channel -> channel.createMessage("All data  updated :D"));
-
+        return Mono.empty();
 
     }
 
 
-    static Mono<?> getDailyListeningTime(ObjectMapper objectMapper, CloseableHttpClient httpClient, Message message) throws JsonProcessingException, UnsupportedEncodingException {
+
+    static Mono<?> getDailyListeningTime(Message message, GatewayDiscordClient client) throws JsonProcessingException, UnsupportedEncodingException {
 
 
         String[] command = message.getContent().split(" ");
 
-        System.out.println("this is msg: " + command);
 
         String timePeriod = "";
         if (command.length >= 2) {
@@ -499,7 +578,13 @@ public class SpongeyBot {
         MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
         MongoCollection<Document> userCollection = database.getCollection("users");
-        MongoCollection<Document> scrobblesCollection = database.getCollection("scrobbles");
+
+        String username = client.getUserById(Snowflake.of(message.getAuthor().get().getId().asLong()))
+                .block()
+                .getUsername();
+
+
+        MongoCollection<Document> scrobblesCollection = database.getCollection(username);
 
         Document userDocument = userCollection.find(Filters.eq("userid", message.getAuthor().get().getId().asLong())).first();
 
@@ -508,7 +593,6 @@ public class SpongeyBot {
         int listeningTime = 0;
 
         int totalTrackslistenedto = 0;
-        Bson filter = Filters.all("userId", message.getAuthor().get().getId().asLong());
 
 
         //if command is 'today'
@@ -540,7 +624,7 @@ public class SpongeyBot {
                     .with(TemporalAdjusters.next(DayOfWeek.SUNDAY))
                     .with(LocalTime.MAX);
 
-            
+
         }  else if (timePeriod.equals("lastweek")) {
 
             firstMinuteOfPeriod = currentTimeInTimezone
@@ -584,62 +668,19 @@ public class SpongeyBot {
         System.out.println(utsEndOfPeriod);
 
 
-
         //looping through all scroblbles for user
-        for (Document doc : scrobblesCollection.find(filter)) {
+        for (Document doc : scrobblesCollection.find()) {
 
-            JsonNode jsonNode = objectMapper.readTree(doc.get("jsonData").toString());
-
-            for (JsonNode track : jsonNode) {
-
-                long dateNode = Integer.parseInt(track.get("date").get("uts").asText());
-
-                //if datenode is bigger than utsstartoday AND datenode smaller than utsendofday
+            int timestamp = doc.getInteger("timestamp");
 
 
-                if (dateNode > utsStartOfPeriod && dateNode < utsEndOfPeriod) {
-                    totalTrackslistenedto += 1;
-                    //get duration of track in seconds
-                    //for this get trackname, artistname
+            if (timestamp > utsStartOfPeriod && timestamp < utsEndOfPeriod) {
+                int trackDurationSeconds = doc.getInteger("duration");
+                totalTrackslistenedto += 1;
 
-                    String artistName = track.get("artist").get("#text").asText();
-
-                    String trackName = track.get("name").asText();
-
-                    System.out.println("this is artistname and trackname: " + artistName + " track: " + trackName + "listened on: " + dateNode);
-
-                    if (Objects.equals(trackName, "let me calm down (feat. j. cole)")) {
-                        System.out.println("skipping this cuz it no work for this track idk why");
-                        continue;
-                    }
-
-
-                    String encodedArtistName = URLEncoder.encode(artistName, "UTF-8");
-                    String encodedTrackName = URLEncoder.encode(trackName, "UTF-8");
-
-
-                     String trackInfoUrl =  "http://ws.audioscrobbler.com/2.0/?method=track.getInfo&api_key=" + API_KEY +  "&artist=" + encodedArtistName + "&track=" + encodedTrackName + "&format=json";
-                    System.out.println("This is url: " + trackInfoUrl);
-                    JsonNode rootNode = getJsonNodeFromUrl(objectMapper, trackInfoUrl, httpClient, message);
-                    int trackDurationSeconds = Integer.parseInt(rootNode.get("track").get("duration").asText())/1000 ;
-                    if (trackDurationSeconds == 0) {
-                        System.out.println("no duration so assume 2.75 mins");
-                        trackDurationSeconds = 165;
-                    }
-                    listeningTime += trackDurationSeconds;
-                    System.out.println("This is track duration as it was : " + rootNode.get("track").get("duration").asText());
-
-                    System.out.println("This is track duration secs: " + trackDurationSeconds);
-
-
-
-                }
-
-
+                listeningTime += trackDurationSeconds;
 
             }
-
-
         }
 
 
@@ -655,7 +696,7 @@ public class SpongeyBot {
         return message.getChannel().flatMap(channel -> channel.createMessage("Time spent listening to music for " + finalTimePeriod + ": " + finalListeningTime /60 + " minutes, and total tracks listened to: " + finalTotalTrackslistenedto + "\n this is between " + finalFirstMinuteOfPeriod + " and " + finalLastMinuteOfPeriod));
     }
 
-        static Mono<?> getYearlyInfo(ObjectMapper objectMapper, CloseableHttpClient httpClient, Message message) throws JsonProcessingException {
+        static Mono<?> getYearlyInfo(Message message, GatewayDiscordClient client) throws JsonProcessingException {
 
         String[] command = message.getContent().split(" ");
 
@@ -673,12 +714,15 @@ public class SpongeyBot {
         int scrobbleCounterForYear = 0;
         int currentTimeUTS = (int) (System.currentTimeMillis() / 1000);
 
+
+            String username = client.getUserById(Snowflake.of(message.getAuthor().get().getId().asLong()))
+                    .block()
+                    .getUsername();
+
         MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
-        MongoCollection<Document> collection = database.getCollection("scrobbles");
+        MongoCollection<Document> collection = database.getCollection(username);
 
-        //gets all docs in scrobbles collectionf for a user
-        Bson filter = Filters.all("userId", message.getAuthor().get().getId().asLong());
 
         long startOfGivenYearUTS = 0;
         long endOfGivenYearUTS = 0;
@@ -687,46 +731,41 @@ public class SpongeyBot {
         LocalDateTime givenEndDateTime = LocalDateTime.of(Integer.parseInt(year), Month.DECEMBER, 31, 23, 59);
 
         if (year.equals("")) {
-
             startOfGivenYearUTS = 1672570800;
             endOfGivenYearUTS = currentTimeUTS;
         } else {
-            System.out.println("This is start date: " + givenStartDateTime);
-            System.out.println("This is end date: " + givenEndDateTime);
-
             startOfGivenYearUTS = convertToUnixTimestamp(givenStartDateTime);
             endOfGivenYearUTS = convertToUnixTimestamp(givenEndDateTime);
-
         }
 
         Map<String, Integer> artistsForYear = new HashMap<>();
-        Map<String, Integer> tracksForYear = new HashMap<>();
-        Map<String, Integer> albumsForYear = new HashMap<>();
+        Map<List<String>, Integer> tracksForYearNew = new HashMap<>();
+        Map<List<String>, Integer> albumsForYearNew = new HashMap<>();
 
 
-        for (Document doc : collection.find(filter)) {
-            JsonNode jsonNode = objectMapper.readTree(doc.get("jsonData").toString());
+        for (Document doc : collection.find()) {
 
-            for (JsonNode track : jsonNode) {
+            int timestamp = doc.getInteger("timestamp");
 
-                int dateNode = Integer.parseInt(track.get("date").get("uts").asText());
+            if (timestamp  < endOfGivenYearUTS && timestamp >= startOfGivenYearUTS) {
+                scrobbleCounterForYear += 1;
+                String artistName = doc.getString("artist") ;
+                int currentCount = artistsForYear.getOrDefault(artistName, 0);
+                artistsForYear.put(artistName, currentCount + 1);
 
-                if (dateNode  < endOfGivenYearUTS && dateNode >= startOfGivenYearUTS) {
-                    scrobbleCounterForYear += 1;
-                    String artistName = track.get("artist").get("#text").asText();
-                    int currentCount = artistsForYear.getOrDefault(artistName, 0);
-                    artistsForYear.put(artistName, currentCount + 1);
+                String trackName = doc.getString("track");
+                List<String> trackArtistPair = new ArrayList<>();
+                trackArtistPair.add(trackName);
+                trackArtistPair.add(artistName);
+                int currentCountTrack = tracksForYearNew.getOrDefault(trackArtistPair, 0);
+                tracksForYearNew.put(trackArtistPair, currentCountTrack + 1);
 
-
-                    String trackName = track.get("name").asText();
-                    int currentCountTrack = tracksForYear.getOrDefault(trackName, 0);
-                    tracksForYear.put(trackName, currentCountTrack + 1);
-
-                    String albumName = track.get("album").get("#text").asText();
-                    int currentCountAlbum = albumsForYear.getOrDefault(albumName, 0);
-                    albumsForYear.put(albumName, currentCountAlbum + 1);
-
-                }
+                String albumName = doc.getString("album");
+                List<String> albumArtistPair = new ArrayList<>();
+                albumArtistPair.add(albumName);
+                albumArtistPair.add(artistName);
+                int currentCountAlbum = albumsForYearNew.getOrDefault(albumArtistPair, 0);
+                albumsForYearNew.put(albumArtistPair, currentCountAlbum + 1);
 
             }
         }
@@ -736,12 +775,13 @@ public class SpongeyBot {
         Collections.sort(entryListArtist, Map.Entry.<String, Integer>comparingByValue().reversed());
 
 
-        List<Map.Entry<String, Integer>> entryListTracks = new ArrayList<>(tracksForYear.entrySet());
-        Collections.sort(entryListTracks, Map.Entry.<String, Integer>comparingByValue().reversed());
+
+        List<Map.Entry<List<String>, Integer>> entryListTracks = new ArrayList<>(tracksForYearNew.entrySet());
+        Collections.sort(entryListTracks, Map.Entry.<List<String>, Integer>comparingByValue().reversed());
 
 
-        List<Map.Entry<String, Integer>> entryListAlbums = new ArrayList<>(albumsForYear.entrySet());
-        Collections.sort(entryListAlbums, Map.Entry.<String, Integer>comparingByValue().reversed());
+        List<Map.Entry<List<String>, Integer>> entryListAlbums = new ArrayList<>(albumsForYearNew.entrySet());
+        Collections.sort(entryListAlbums, Map.Entry.<List<String>, Integer>comparingByValue().reversed());
 
         EmbedCreateSpec.Builder embedBuilder = createEmbed("Your stats for " + year);
 
@@ -750,7 +790,6 @@ public class SpongeyBot {
         int count = 1;
         StringBuilder artistField = new StringBuilder();
         for (Map.Entry<String, Integer> entry : entryListArtist) {
-            //embedBuilder.addField(count + ". " + entry.getKey() + ": " + entry.getValue(), "", false);
             artistField.append(count).append(". ").append(entry.getKey()).append(": ").append(entry.getValue()).append("\n");
 
             count++;
@@ -767,8 +806,8 @@ public class SpongeyBot {
         int trackCount = 1;
         StringBuilder trackField = new StringBuilder();
 
-        for (Map.Entry<String, Integer> entry : entryListTracks) {
-            trackField.append(trackCount).append(". ").append(entry.getKey()).append(": ").append(entry.getValue()).append("\n");
+        for (Map.Entry<List<String>, Integer> entry : entryListTracks) {
+            trackField.append(trackCount).append(". ").append(entry.getKey().get(0)).append(": ").append(entry.getValue()).append("\n");
 
 
             trackCount++;
@@ -784,8 +823,8 @@ public class SpongeyBot {
         embedBuilder.addField("Top 10 Albums", " ", false);
 
         int albumCount = 1;
-        for (Map.Entry<String, Integer> entry : entryListAlbums) {
-            embedBuilder.addField(albumCount + ". " + entry.getKey() + ": " + entry.getValue(), "", false);
+        for (Map.Entry<List<String>, Integer> entry : entryListAlbums) {
+            embedBuilder.addField(albumCount + ". " + entry.getKey().get(0) + ": " + entry.getValue(), "", false);
             albumCount++;
             if (albumCount > 10) {
                 break;
@@ -798,11 +837,11 @@ public class SpongeyBot {
 
     }
 
-        private static long convertToUnixTimestamp(LocalDateTime localDateTime) {
+    private static long convertToUnixTimestamp(LocalDateTime localDateTime) {
         return localDateTime.atZone(ZoneId.systemDefault()).toEpochSecond();
     }
 
-    static Mono<?> getScrobblesInTimeframe(ObjectMapper objectMapper, CloseableHttpClient httpClient, Message message) throws JsonProcessingException {
+    static Mono<?> getScrobblesInTimeframe(Message message, GatewayDiscordClient client) throws JsonProcessingException {
         //if no param given, go for all scrobbles
         //other params: years like 2023, 2022, 2021, 2020 then it would get the time for 01 jan 1200 am that year until 31 dec 11:59 pm that year
 
@@ -821,10 +860,13 @@ public class SpongeyBot {
         int scrobbleCounterForYear = 0;
         int currentTimeUTS = (int) (System.currentTimeMillis() / 1000);
 
+        String username = client.getUserById(Snowflake.of(message.getAuthor().get().getId().asLong()))
+                .block()
+                .getUsername();
 
         MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
-        MongoCollection<Document> collection = database.getCollection("scrobbles");
+        MongoCollection<Document> collection = database.getCollection(username);
 
         //gets all docs in scrobbles collection for a user
         Bson filter = Filters.all("userId", message.getAuthor().get().getId().asLong());
@@ -849,17 +891,10 @@ public class SpongeyBot {
         }
 
         for (Document doc : collection.find(filter)) {
-            JsonNode jsonNode = objectMapper.readTree(doc.get("jsonData").toString());
+            int timestamp = doc.getInteger("timestamp");
 
-
-            for (JsonNode track : jsonNode) {
-
-                int dateNode = Integer.parseInt(track.get("date").get("uts").asText());
-
-                if (dateNode  < endOfGivenYearUTS && dateNode >= startOfGivenYearUTS) {
-                    scrobbleCounterForYear += 1;
-                }
-
+            if (timestamp  < endOfGivenYearUTS && timestamp >= startOfGivenYearUTS) {
+                scrobbleCounterForYear += 1;
             }
         }
 
@@ -1089,7 +1124,7 @@ public class SpongeyBot {
 
             String sessionKey = document.getString("sessionkey");
             long userId = document.getLong("userid");
-            String getArtistInfoUrl = BASE_URL + "?method=artist.getinfo&artist=" + artistName + "&api_key=" + API_KEY + "&sk=" + sessionKey + "&format=json";
+            String getArtistInfoUrl = BASE_URL + "?method=artist.getinfo&artist=" + artistName + "&api_key=" + API_KEY + "&sk=" + sessionKey + "&autocorrect=1" + "&format=json";
             System.out.println("This is artist info url for some user: " + getArtistInfoUrl);
 
             JsonNode rootNode = getJsonNodeFromUrl(objectMapper, getArtistInfoUrl, httpClient, message);
@@ -1420,7 +1455,7 @@ public class SpongeyBot {
 
                                     if (message.getContent().startsWith("$scrobbles")) {
                                         try {
-                                            return getScrobblesInTimeframe(objectMapper, httpClient, message);
+                                            return getScrobblesInTimeframe(message, client);
                                         } catch (JsonProcessingException e) {
                                             throw new RuntimeException(e);
                                         }
@@ -1428,31 +1463,16 @@ public class SpongeyBot {
 
                                     if (message.getContent().startsWith("$year")) {
                                         try {
-                                            return getYearlyInfo(objectMapper, httpClient, message);
+                                            return getYearlyInfo(message, client);
                                         } catch (JsonProcessingException e) {
                                             throw new RuntimeException(e);
                                         }
                                     }
 
-                                    if (message.getContent().equalsIgnoreCase("$updaterecent")){
-                                        try {
-                                            return updateRecentCommand(objectMapper, httpClient, message, client);
-                                        } catch (JsonProcessingException e) {
-                                            throw new RuntimeException(e);
-                                        }
-                                    }
-
-                                    if (message.getContent().equalsIgnoreCase("$chunks")) {
-                                        try {
-                                            return getChunksCommand(objectMapper, httpClient, message, client);
-                                        } catch (JsonProcessingException e) {
-                                            throw new RuntimeException(e);
-                                        }
-                                    }
 
                                     if (message.getContent().startsWith("$time")) {
                                         try {
-                                            return getDailyListeningTime(objectMapper, httpClient, message);
+                                            return getDailyListeningTime(message, client);
                                         } catch (JsonProcessingException e) {
                                             throw new RuntimeException(e);
                                         } catch (UnsupportedEncodingException e) {
@@ -1473,14 +1493,40 @@ public class SpongeyBot {
                                     }
 
 
+
                                     if (message.getContent().equalsIgnoreCase("$update")) {
-                                        return updateCommand(objectMapper, httpClient, message, client);
+                                        try {
+                                            return betterUpdateCommand(objectMapper, httpClient, message, client);
+                                        } catch (UnsupportedEncodingException e) {
+                                            throw new RuntimeException(e);
+                                        }
                                     }
 
-                                    if (message.getContent().equalsIgnoreCase("$delete")) {
-                                        return deleteByUser();
+
+                                    if (message.getContent().equalsIgnoreCase("$testingbetter")) {
+                                        return testingbetterupdatecommand(objectMapper, httpClient, message, client);
                                     }
 
+                                    if (message.getContent().equalsIgnoreCase("$testusername")) {
+                                        try {
+                                            return testUsername(client);
+                                        } catch (JsonProcessingException e) {
+                                            throw new RuntimeException(e);
+                                        } catch (UnsupportedEncodingException e) {
+                                            throw new RuntimeException(e);
+                                        }
+                                    }
+
+
+                                    if (message.getContent().equalsIgnoreCase("$betterupdaterecentcommand")) {
+                                        try {
+                                            return betterupdaterecentcommand(objectMapper, httpClient, message, client);
+                                        } catch (JsonProcessingException e) {
+                                            throw new RuntimeException(e);
+                                        } catch (UnsupportedEncodingException e) {
+                                            throw new RuntimeException(e);
+                                        }
+                                    }
 
                                     return Mono.empty();
                                 }))
