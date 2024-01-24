@@ -57,14 +57,14 @@ public class Service {
     }
 
 
-    static JsonNode getJsonNodeFromUrl(ObjectMapper objectMapper, String url, CloseableHttpClient httpClient, Message message) {
+    static JsonNode getJsonNodeFromUrl(ObjectMapper objectMapper, String url, CloseableHttpClient httpClient) {
 
         HttpGet request = new HttpGet(url);
         HttpResponse response = null;
         try {
             response = httpClient.execute(request);
         } catch (IOException e) {
-            Service.handleException("error: couldn't execute track info url", message);
+            System.out.println("error: couldn't execute track info url");
         }
 
         System.out.println("API Response: " + response.getStatusLine());
@@ -72,7 +72,7 @@ public class Service {
         try {
             rootNode = objectMapper.readTree(response.getEntity().getContent());
         } catch (IOException e) {
-            Service.handleException("error: couldn't get root node of track info url", message);
+            System.out.println("error: couldn't get root node of track info url");
         }
 
         return rootNode;
@@ -209,7 +209,7 @@ public class Service {
         System.out.println("recent tracksu rl: " + getRecentUserTracksUrl);
 
         try {
-            JsonNode rootNode =  Service.getJsonNodeFromUrl(objectMapper, getRecentUserTracksUrl, httpClient, message);
+            JsonNode rootNode =  Service.getJsonNodeFromUrl(objectMapper, getRecentUserTracksUrl, httpClient);
             JsonNode trackNode = rootNode.path("recenttracks").path("track");
             JsonNode firstTrackNode = trackNode.get(0);
             JsonNode artistNode = firstTrackNode.path("artist").path("#text");

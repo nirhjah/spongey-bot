@@ -68,7 +68,7 @@ public class TrackCommands {
             //get users current track, name from that and set trackName to that
             String getRecentUserTracksUrl = BASE_URL + "?method=user.getrecenttracks&api_key=" + API_KEY + "&sk=" + userSessionKey + "&format=json";
             System.out.println("recent tracks url: " + getRecentUserTracksUrl);
-            JsonNode rootNode =  Service.getJsonNodeFromUrl(objectMapper, getRecentUserTracksUrl, httpClient, message);
+            JsonNode rootNode =  Service.getJsonNodeFromUrl(objectMapper, getRecentUserTracksUrl, httpClient);
 
             try {
                 JsonNode trackNode = rootNode.path("recenttracks").path("track");
@@ -92,7 +92,7 @@ public class TrackCommands {
             String searchUrl = "https://ws.audioscrobbler.com/2.0/?method=track.search&track=" + trackName + "&api_key=" + API_KEY + "&format=json";
 
 
-            JsonNode rootNodeForSearch =  Service.getJsonNodeFromUrl(objectMapper, searchUrl, httpClient, message);
+            JsonNode rootNodeForSearch =  Service.getJsonNodeFromUrl(objectMapper, searchUrl, httpClient);
 
             JsonNode trackListForSearch = rootNodeForSearch.path("results").path("trackmatches").path("track");
 
@@ -254,7 +254,7 @@ public class TrackCommands {
 
                     try {
 
-                        JsonNode rootNode =  Service.getJsonNodeFromUrl(objectMapper, url, httpClient, message);
+                        JsonNode rootNode =  Service.getJsonNodeFromUrl(objectMapper, url, httpClient);
 
                         EmbedCreateSpec.Builder embedBuilder = Service.createEmbed("Your top tracks");
 

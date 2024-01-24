@@ -69,7 +69,7 @@ public class ArtistCommands {
             String searchUrl = "https://ws.audioscrobbler.com/2.0/?method=artist.search&artist=" + artistName + "&api_key=" + API_KEY + "&format=json";
 
 
-            JsonNode rootNodeForSearch =  Service.getJsonNodeFromUrl(objectMapper, searchUrl, httpClient, message);
+            JsonNode rootNodeForSearch =  Service.getJsonNodeFromUrl(objectMapper, searchUrl, httpClient);
 
             JsonNode artistListForSearch = rootNodeForSearch.path("results").path("artistmatches").path("artist");
 
@@ -150,7 +150,7 @@ public class ArtistCommands {
             embedBuilder.addField("",  wkString.toString(), false);
 
 
-            embedBuilder.addField("crown stuff", CrownsCommands.claimCrown(message, client, mongoClient, database, artistName.replace("+", " "), owner, ownerPlays), false);
+            embedBuilder.addField("", CrownsCommands.claimCrown(message, client, mongoClient, database, artistName.replace("+", " "), owner, ownerPlays), false);
 
 
 
@@ -387,7 +387,7 @@ public class ArtistCommands {
         return message.getChannel()
                 .flatMap(userResponse -> {
                     try {
-                        JsonNode rootNode =  Service.getJsonNodeFromUrl(objectMapper, url, httpClient, message);
+                        JsonNode rootNode =  Service.getJsonNodeFromUrl(objectMapper, url, httpClient);
 
                         EmbedCreateSpec.Builder embedBuilder = Service.createEmbed("Your top artists");
 

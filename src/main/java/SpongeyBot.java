@@ -6,6 +6,7 @@ import com.mongodb.client.model.Filters;
 import discord4j.common.util.Snowflake;
 import discord4j.core.DiscordClient;
 import discord4j.core.GatewayDiscordClient;
+import discord4j.core.event.domain.interaction.ButtonInteractionEvent;
 import discord4j.core.event.domain.message.MessageCreateEvent;
 import discord4j.core.object.entity.Message;
 
@@ -108,7 +109,7 @@ public class SpongeyBot {
                 String getRecentUserTracksUrl = BASE_URL + "?method=user.getrecenttracks&limit=200&api_key=" + API_KEY + "&sk=" + sessionKey + "&format=json";
 
                 try {
-                    rootNode =  Service.getJsonNodeFromUrl(objectMapper, getRecentUserTracksUrl, httpClient, message);
+                    rootNode =  Service.getJsonNodeFromUrl(objectMapper, getRecentUserTracksUrl, httpClient);
                     totalPages = Integer.parseInt(rootNode.path("recenttracks").path("@attr").path("totalPages").asText());
                     System.out.println(" total pages: " + totalPages);
 
@@ -125,7 +126,7 @@ public class SpongeyBot {
                 for (int i = 1; i <= totalPages; i++) {
 
                     String urlPerPage = BASE_URL + "?method=user.getrecenttracks&limit=200&page=" + i + "&api_key=" + API_KEY + "&sk=" + sessionKey + "&format=json";
-                    JsonNode pageNode = Service.getJsonNodeFromUrl(objectMapper, urlPerPage, httpClient, message);
+                    JsonNode pageNode = Service.getJsonNodeFromUrl(objectMapper, urlPerPage, httpClient);
                     JsonNode listOfTracksForGivenPage = pageNode.get("recenttracks").get("track");
 
                     for (JsonNode track : listOfTracksForGivenPage) {
@@ -178,7 +179,7 @@ public class SpongeyBot {
 
                                 String trackInfoUrl =  "http://ws.audioscrobbler.com/2.0/?method=track.getInfo&api_key=" + API_KEY +  "&artist=" + encodedArtistName + "&track=" + encodedTrackName + "&format=json";
                                 System.out.println("Get duration url: " + trackInfoUrl);
-                                JsonNode thisNode = Service.getJsonNodeFromUrl(objectMapper, trackInfoUrl, httpClient, message);
+                                JsonNode thisNode = Service.getJsonNodeFromUrl(objectMapper, trackInfoUrl, httpClient);
                                 System.out.println("track node: " + thisNode.get("track"));
                                 int trackDurationSeconds = Integer.parseInt(thisNode.get("track").get("duration").asText())/1000 ;
                                 if (trackDurationSeconds == 0) {
@@ -270,7 +271,7 @@ public class SpongeyBot {
         JsonNode rootNode;
         int totalPages = 0;
         try {
-            rootNode =  Service.getJsonNodeFromUrl(objectMapper, getRecentUserTracksUrl, httpClient, message);
+            rootNode =  Service.getJsonNodeFromUrl(objectMapper, getRecentUserTracksUrl, httpClient);
             totalPages = Integer.parseInt(rootNode.path("recenttracks").path("@attr").path("totalPages").asText());
             System.out.println(" total pages: " + totalPages);
 
@@ -281,7 +282,7 @@ public class SpongeyBot {
         //todo change i to whatever number it crashes
         for (int i = 240; i <= totalPages; i++) {
             String urlPerPage = BASE_URL + "?method=user.getrecenttracks&limit=200&page=" + i + "&api_key=" + API_KEY + "&sk=" + sessionKey + "&format=json";
-            JsonNode pageNode = Service.getJsonNodeFromUrl(objectMapper, urlPerPage, httpClient, message);
+            JsonNode pageNode = Service.getJsonNodeFromUrl(objectMapper, urlPerPage, httpClient);
 
             JsonNode listOfTracksForGivenPage = pageNode.get("recenttracks").get("track");
 
@@ -330,7 +331,7 @@ public class SpongeyBot {
 
                         String trackInfoUrl = "http://ws.audioscrobbler.com/2.0/?method=track.getInfo&api_key=" + API_KEY + "&artist=" + encodedArtistName + "&track=" + encodedTrackName + "&format=json";
                         System.out.println("Get duration url: " + trackInfoUrl);
-                        JsonNode thisNode = Service.getJsonNodeFromUrl(objectMapper, trackInfoUrl, httpClient, message);
+                        JsonNode thisNode = Service.getJsonNodeFromUrl(objectMapper, trackInfoUrl, httpClient);
                         System.out.println("track node: " + thisNode.get("track"));
                         int trackDurationSeconds = Integer.parseInt(thisNode.get("track").get("duration").asText()) / 1000;
                         if (trackDurationSeconds == 0) {
@@ -822,7 +823,7 @@ public class SpongeyBot {
 
         String url = BASE_URL + "?method=user.gettopalbums&api_key=" + API_KEY + "&sk=" + userSessionKey  + "&limit=1" + "&period=7day" + "&format=json";
         System.out.println(url);
-        JsonNode rootNode =  Service.getJsonNodeFromUrl(objectMapper, url, httpClient, message);
+        JsonNode rootNode =  Service.getJsonNodeFromUrl(objectMapper, url, httpClient);
         JsonNode albumNode = rootNode.path("topalbums").path("album");
         String firstAlbumNode = albumNode.get(0).path("image").get(2).path("#text").asText();
         System.out.println("album image: " + firstAlbumNode);
@@ -869,7 +870,7 @@ public class SpongeyBot {
                     String token;
                     //Get user to auth first
                     try {
-                        JsonNode rootNode =  Service.getJsonNodeFromUrl(objectMapper, url, httpClient, message);
+                        JsonNode rootNode =  Service.getJsonNodeFromUrl(objectMapper, url, httpClient);
 
                         token = rootNode.get("token").asText();
                         String requestAuthUrl = "http://www.last.fm/api/auth/?api_key=" + API_KEY + "&token=" + token;
@@ -899,7 +900,7 @@ public class SpongeyBot {
 
                     System.out.println("This is session url " + getSessionUrl);
 
-                    JsonNode rootNode = Service.getJsonNodeFromUrl(objectMapper, getSessionUrl, httpClient, message);
+                    JsonNode rootNode = Service.getJsonNodeFromUrl(objectMapper, getSessionUrl, httpClient);
 
                     try {
                         Thread.sleep(3000);
@@ -930,6 +931,226 @@ public class SpongeyBot {
     }
 
 
+    private static Mono<?> handleMessage(MessageCreateEvent event, ObjectMapper objectMapper, CloseableHttpClient httpClient, GatewayDiscordClient client) {
+        Message message = event.getMessage();
+        String content = message.getContent();
+
+        if (message.getContent().startsWith("$scrobblelb")) {
+            return LeaderboardCommands.scrobbleLbCommand(message,objectMapper, httpClient, client);
+        }
+
+        if (message.getContent().equalsIgnoreCase("$a")) {
+            return ArtistCommands.artistInfoCommand(message,objectMapper, httpClient, client);
+        }
+
+        if (message.getContent().startsWith("$wkt")) {
+            return TrackCommands.wktCommand(message,objectMapper, httpClient, client);
+        }
+
+        if (message.getContent().startsWith("$wk")) {
+            try {
+                return ArtistCommands.wkCommand(message, objectMapper, httpClient, client);
+            } catch (JsonProcessingException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+
+        if (message.getContent().equalsIgnoreCase("$topartists")) {
+            return ArtistCommands.topArtistsCommand(message, objectMapper, httpClient, client);
+        }
+
+        if (message.getContent().equalsIgnoreCase("$toptracks")) {
+            return TrackCommands.topTracksCommand(message, objectMapper, httpClient, client);
+        }
+
+        if (message.getContent().equalsIgnoreCase("$login")) {
+            return loginCommand(message, objectMapper, httpClient);
+        }
+
+        if (message.getContent().equalsIgnoreCase("$help")) {
+            return helpCommand(message);
+        }
+
+        if (message.getContent().startsWith("$scrobbles")) {
+            try {
+                return UserScrobbleCommands.getScrobblesInTimeframe(message, client);
+            } catch (JsonProcessingException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        if (message.getContent().startsWith("$year")) {
+            try {
+                return UserScrobbleCommands.getYearlyInfo(message, client);
+            } catch (JsonProcessingException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+
+        if (message.getContent().startsWith("$time")) {
+
+            //split
+            String[] commandArray = message.getContent().split(" ");
+
+            String command = commandArray[0].toLowerCase();
+
+            if (command.equals("$time")) {
+                System.out.println("running time command");
+                try {
+                    return UserScrobbleCommands.getDailyListeningTime(message, client);
+                } catch (JsonProcessingException | UnsupportedEncodingException e) {
+                    throw new RuntimeException(e);
+                }
+
+            } else if (command.equals("$timelb")) {
+                System.out.println("running time leaderboard command");
+
+                try {
+                    return LeaderboardCommands.getTimeLeaderboard(message, client);
+                } catch (JsonProcessingException | UnsupportedEncodingException e) {
+                    throw new RuntimeException(e);
+                }
+            }
+        }
+
+        if (message.getContent().startsWith("$pic")) {
+            try {
+                return updateBotPic(message,objectMapper, httpClient, client, event);
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+
+
+        if (message.getContent().equalsIgnoreCase("$update")) {
+            try {
+                return betterUpdateCommand(objectMapper, httpClient, message, client);
+            } catch (UnsupportedEncodingException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+
+        if (message.getContent().startsWith("$artisttime")) {
+            try {
+                return ArtistCommands.getArtistTime(message, client, objectMapper, httpClient);
+            } catch (JsonProcessingException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        if (message.getContent().startsWith("$at")) {
+            try {
+                return ArtistCommands.getArtistTracks(message, client);
+            } catch (JsonProcessingException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        if (message.getContent().startsWith("$trackinfo")) {
+            try {
+                return TrackCommands.getTrackInfo(message, client);
+            } catch (JsonProcessingException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        if (message.getContent().startsWith("$overview") || message.getContent().equals("$o") ) {
+            try {
+                return getOverview(message, client);
+            } catch (JsonProcessingException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+
+        if (message.getContent().startsWith("$duration")) {
+            try {
+                return TrackCommands.durationTrackCommand(message, client);
+            } catch (JsonProcessingException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        if (message.getContent().startsWith("$artistlb")) {
+            return LeaderboardCommands.artistLbCommand(message, client);
+        }
+
+
+        if (message.getContent().startsWith("$tracklb")) {
+            return LeaderboardCommands.tracklbCommand(message, client);
+        }
+
+
+        if (message.getContent().startsWith("$crownlb")) {
+            try {
+                return LeaderboardCommands.getCrownLb(message, client);
+            } catch (JsonProcessingException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        if (message.getContent().startsWith("$blend")) {
+            return blendWithUser(message, client);
+        }
+
+        if (message.getContent().startsWith("$crownsclose")) {
+            try {
+                return CrownsCommands.crownsCloseCommand(message, client);
+            } catch (JsonProcessingException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        if (message.getContent().startsWith("$crowns")) {
+            try {
+                return CrownsCommands.getCrowns(message, client);
+            } catch (JsonProcessingException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        if (message.getContent().startsWith("$most")) {
+            try {
+                return TrackCommands.getSongListenedToMostOneDay(message, client);
+            } catch (JsonProcessingException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        if (message.getContent().startsWith("$topscrobbleddays")) {
+            try {
+                return UserScrobbleCommands.getTopScrobbledDays(message, client);
+            } catch (JsonProcessingException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+
+        if (message.getContent().equalsIgnoreCase("$testingbetter")) {
+            return AdminCommands.testingbetterupdatecommand();
+        }
+
+        if (message.getContent().equalsIgnoreCase("$testusername")) {
+            return AdminCommands.testUsername(client);
+        }
+
+
+        if (message.getContent().equalsIgnoreCase("$betterupdaterecentcommand")) {
+            try {
+                return betterupdaterecentcommand(objectMapper, httpClient, message, client);
+            } catch (JsonProcessingException | UnsupportedEncodingException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        return Mono.empty();
+
+    }
+
     public static void main(String[] args) {
 
 
@@ -937,227 +1158,22 @@ public class SpongeyBot {
             ObjectMapper objectMapper = new ObjectMapper();
         CloseableHttpClient httpClient = HttpClients.createDefault();
 
+
         DiscordClient.create(BOT_TOKEN)
-                .withGateway(client ->
-        client.on(MessageCreateEvent.class)
-                                .flatMap(event -> {
-                                    Message message = event.getMessage();
+                .withGateway(client -> {
+                    client.on(MessageCreateEvent.class)
+                            .flatMap(event -> handleMessage(event, objectMapper, httpClient, client))
+                            .subscribe();
 
-                                    if (message.getContent().startsWith("$scrobblelb")) {
-                                        return LeaderboardCommands.scrobbleLbCommand(message,objectMapper, httpClient, client);
-                                    }
+                    client.on(ButtonInteractionEvent.class)
+                            .flatMap(event -> UserScrobbleCommands.handleButtonInteraction(event, client))
+                            .subscribe();
 
-                                    if (message.getContent().equalsIgnoreCase("$a")) {
-                                        return ArtistCommands.artistInfoCommand(message,objectMapper, httpClient, client);
-                                    }
-
-                                    if (message.getContent().startsWith("$wkt")) {
-                                        return TrackCommands.wktCommand(message,objectMapper, httpClient, client);
-                                    }
-
-                                    if (message.getContent().startsWith("$wk")) {
-                                        try {
-                                            return ArtistCommands.wkCommand(message, objectMapper, httpClient, client);
-                                        } catch (JsonProcessingException e) {
-                                            throw new RuntimeException(e);
-                                        }
-                                    }
-
-
-                                    if (message.getContent().equalsIgnoreCase("$topartists")) {
-                                        return ArtistCommands.topArtistsCommand(message, objectMapper, httpClient, client);
-                                    }
-
-                                    if (message.getContent().equalsIgnoreCase("$toptracks")) {
-                                        return TrackCommands.topTracksCommand(message, objectMapper, httpClient, client);
-                                    }
-
-                                    if (message.getContent().equalsIgnoreCase("$login")) {
-                                        return loginCommand(message, objectMapper, httpClient);
-                                    }
-
-                                    if (message.getContent().equalsIgnoreCase("$help")) {
-                                        return helpCommand(message);
-                                    }
-
-                                    if (message.getContent().startsWith("$scrobbles")) {
-                                        try {
-                                            return UserScrobbleCommands.getScrobblesInTimeframe(message, client);
-                                        } catch (JsonProcessingException e) {
-                                            throw new RuntimeException(e);
-                                        }
-                                    }
-
-                                    if (message.getContent().startsWith("$year")) {
-                                        try {
-                                            return UserScrobbleCommands.getYearlyInfo(message, client);
-                                        } catch (JsonProcessingException e) {
-                                            throw new RuntimeException(e);
-                                        }
-                                    }
-
-
-                                    if (message.getContent().startsWith("$time")) {
-
-                                        //split
-                                        String[] commandArray = message.getContent().split(" ");
-
-                                        String command = commandArray[0].toLowerCase();
-
-                                        if (command.equals("$time")) {
-                                            System.out.println("running time command");
-                                            try {
-                                                return UserScrobbleCommands.getDailyListeningTime(message, client);
-                                            } catch (JsonProcessingException | UnsupportedEncodingException e) {
-                                                throw new RuntimeException(e);
-                                            }
-
-                                        } else if (command.equals("$timelb")) {
-                                            System.out.println("running time leaderboard command");
-
-                                            try {
-                                                return LeaderboardCommands.getTimeLeaderboard(message, client);
-                                            } catch (JsonProcessingException | UnsupportedEncodingException e) {
-                                                throw new RuntimeException(e);
-                                            }
-                                        }
-                                    }
-
-                                    if (message.getContent().startsWith("$pic")) {
-                                        try {
-                                            return updateBotPic(message,objectMapper, httpClient, client, event);
-                                        } catch (IOException e) {
-                                            throw new RuntimeException(e);
-                                        }
-                                    }
-
-
-
-                                    if (message.getContent().equalsIgnoreCase("$update")) {
-                                        try {
-                                            return betterUpdateCommand(objectMapper, httpClient, message, client);
-                                        } catch (UnsupportedEncodingException e) {
-                                            throw new RuntimeException(e);
-                                        }
-                                    }
-
-
-                                    if (message.getContent().startsWith("$artisttime")) {
-                                        try {
-                                            return ArtistCommands.getArtistTime(message, client, objectMapper, httpClient);
-                                        } catch (JsonProcessingException e) {
-                                            throw new RuntimeException(e);
-                                        }
-                                    }
-
-                                    if (message.getContent().startsWith("$at")) {
-                                        try {
-                                            return ArtistCommands.getArtistTracks(message, client);
-                                        } catch (JsonProcessingException e) {
-                                            throw new RuntimeException(e);
-                                        }
-                                    }
-
-                                    if (message.getContent().startsWith("$trackinfo")) {
-                                        try {
-                                            return TrackCommands.getTrackInfo(message, client);
-                                        } catch (JsonProcessingException e) {
-                                            throw new RuntimeException(e);
-                                        }
-                                    }
-
-                                    if (message.getContent().startsWith("$overview") || message.getContent().equals("$o") ) {
-                                        try {
-                                            return getOverview(message, client);
-                                        } catch (JsonProcessingException e) {
-                                            throw new RuntimeException(e);
-                                        }
-                                    }
-
-
-                                    if (message.getContent().startsWith("$duration")) {
-                                        try {
-                                            return TrackCommands.durationTrackCommand(message, client);
-                                        } catch (JsonProcessingException e) {
-                                            throw new RuntimeException(e);
-                                        }
-                                    }
-
-                                    if (message.getContent().startsWith("$artistlb")) {
-                                        return LeaderboardCommands.artistLbCommand(message, client);
-                                    }
-
-
-                                    if (message.getContent().startsWith("$tracklb")) {
-                                        return LeaderboardCommands.tracklbCommand(message, client);
-                                    }
-
-
-                                    if (message.getContent().startsWith("$crownlb")) {
-                                        try {
-                                            return LeaderboardCommands.getCrownLb(message, client);
-                                        } catch (JsonProcessingException e) {
-                                            throw new RuntimeException(e);
-                                        }
-                                    }
-
-                                    if (message.getContent().startsWith("$blend")) {
-                                        return blendWithUser(message, client);
-                                    }
-
-                                    if (message.getContent().startsWith("$crownsclose")) {
-                                        try {
-                                            return CrownsCommands.crownsCloseCommand(message, client);
-                                        } catch (JsonProcessingException e) {
-                                            throw new RuntimeException(e);
-                                        }
-                                    }
-
-                                    if (message.getContent().startsWith("$crowns")) {
-                                        try {
-                                            return CrownsCommands.getCrowns(message, client);
-                                        } catch (JsonProcessingException e) {
-                                            throw new RuntimeException(e);
-                                        }
-                                    }
-
-                                    if (message.getContent().startsWith("$most")) {
-                                        try {
-                                            return TrackCommands.getSongListenedToMostOneDay(message, client);
-                                        } catch (JsonProcessingException e) {
-                                            throw new RuntimeException(e);
-                                        }
-                                    }
-
-                                    if (message.getContent().startsWith("$topscrobbleddays")) {
-                                        try {
-                                            return UserScrobbleCommands.getTopScrobbledDays(message, client);
-                                        } catch (JsonProcessingException e) {
-                                            throw new RuntimeException(e);
-                                        }
-                                    }
-
-
-                                    if (message.getContent().equalsIgnoreCase("$testingbetter")) {
-                                        return AdminCommands.testingbetterupdatecommand();
-                                    }
-
-                                    if (message.getContent().equalsIgnoreCase("$testusername")) {
-                                            return AdminCommands.testUsername(client);
-                                    }
-
-
-                                    if (message.getContent().equalsIgnoreCase("$betterupdaterecentcommand")) {
-                                        try {
-                                            return betterupdaterecentcommand(objectMapper, httpClient, message, client);
-                                        } catch (JsonProcessingException | UnsupportedEncodingException e) {
-                                            throw new RuntimeException(e);
-                                        }
-                                    }
-
-                                    return Mono.empty();
-                                }))
+                    return client.onDisconnect();
+                })
                 .block();
+
+
     }
 }
 

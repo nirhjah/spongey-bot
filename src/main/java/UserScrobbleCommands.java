@@ -6,8 +6,14 @@ import com.mongodb.client.MongoDatabase;
 import com.mongodb.client.model.Filters;
 import discord4j.common.util.Snowflake;
 import discord4j.core.GatewayDiscordClient;
+import discord4j.core.event.domain.interaction.ButtonInteractionEvent;
+import discord4j.core.object.Embed;
+import discord4j.core.object.component.ActionRow;
+import discord4j.core.object.component.Button;
 import discord4j.core.object.entity.Message;
+import discord4j.core.spec.EmbedCreateFields;
 import discord4j.core.spec.EmbedCreateSpec;
+import discord4j.core.spec.MessageCreateSpec;
 import org.bson.Document;
 import org.bson.conversions.Bson;
 import reactor.core.publisher.Mono;
@@ -22,29 +28,12 @@ public class UserScrobbleCommands {
 
     static String connectionString = System.getenv("CONNECTION_STRING");
 
+    static StringBuilder getArtistTrackOrAlbumInfoForYear(String year, GatewayDiscordClient client, Message message, String username) {
 
-    static Mono<?> getYearlyInfo(Message message, GatewayDiscordClient client) throws JsonProcessingException {
+        StringBuilder fieldToSave = new StringBuilder();
 
-        String[] command = message.getContent().split(" ");
-
-        String year;
-        if (command.length >= 2) {
-            year = command[1];
-            System.out.println("Year: " + year);
-        } else {
-            return message.getChannel().flatMap(channel -> channel.createMessage("Valid commands: $year 2023, $year 2022, $year 2021 etc"));
-
-        }
-
-
-        //GET SCROBBLES FOR GIVEN YEAR
-        int scrobbleCounterForYear = 0;
         int currentTimeUTS = (int) (System.currentTimeMillis() / 1000);
 
-
-        String username = client.getUserById(Snowflake.of(message.getAuthor().get().getId().asLong()))
-                .block()
-                .getUsername();
 
         MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
@@ -58,113 +47,298 @@ public class UserScrobbleCommands {
         LocalDateTime givenEndDateTime = LocalDateTime.of(Integer.parseInt(year), Month.DECEMBER, 31, 23, 59);
 
         if (year.equals("")) {
-            startOfGivenYearUTS = 1672570800;
+            startOfGivenYearUTS = 1704020400;
             endOfGivenYearUTS = currentTimeUTS;
         } else {
             startOfGivenYearUTS = Service.convertToUnixTimestamp(givenStartDateTime);
             endOfGivenYearUTS = Service.convertToUnixTimestamp(givenEndDateTime);
         }
 
+        int count = 1;
         Map<String, Integer> artistsForYear = new HashMap<>();
         Map<List<String>, Integer> tracksForYearNew = new HashMap<>();
         Map<List<String>, Integer> albumsForYearNew = new HashMap<>();
+        if (currentPage == 1) {
 
+            for (Document doc : collection.find()) {
 
-        for (Document doc : collection.find()) {
+                int timestamp = doc.getInteger("timestamp");
 
-            int timestamp = doc.getInteger("timestamp");
+                if (timestamp  < endOfGivenYearUTS && timestamp >= startOfGivenYearUTS) {
+                   // scrobbleCounterForYear += 1;
+                    String artistName = doc.getString("artist") ;
+                    int currentCount = artistsForYear.getOrDefault(artistName, 0);
+                    artistsForYear.put(artistName, currentCount + 1);
 
-            if (timestamp  < endOfGivenYearUTS && timestamp >= startOfGivenYearUTS) {
-                scrobbleCounterForYear += 1;
-                String artistName = doc.getString("artist") ;
-                int currentCount = artistsForYear.getOrDefault(artistName, 0);
-                artistsForYear.put(artistName, currentCount + 1);
-
-                String trackName = doc.getString("track");
-                List<String> trackArtistPair = new ArrayList<>();
-                trackArtistPair.add(trackName);
-                trackArtistPair.add(artistName);
-                int currentCountTrack = tracksForYearNew.getOrDefault(trackArtistPair, 0);
-                tracksForYearNew.put(trackArtistPair, currentCountTrack + 1);
-
-                String albumName = doc.getString("album");
-                List<String> albumArtistPair = new ArrayList<>();
-                albumArtistPair.add(albumName);
-                albumArtistPair.add(artistName);
-                int currentCountAlbum = albumsForYearNew.getOrDefault(albumArtistPair, 0);
-                albumsForYearNew.put(albumArtistPair, currentCountAlbum + 1);
-
+                }
             }
+
+
+            List<Map.Entry<String, Integer>> entryListArtist = new ArrayList<>(artistsForYear.entrySet());
+            entryListArtist.sort(Map.Entry.<String, Integer>comparingByValue().reversed());
+
+
+            for (Map.Entry<String, Integer> entry : entryListArtist) {
+
+                if (count == 1) {
+                    fieldToSave.append("\uD83E\uDD47 **").append(entry.getKey()).append("** - ").append(entry.getValue()).append("\n");
+                } else if (count == 2) {
+                    fieldToSave.append("\uD83E\uDD48 **").append(entry.getKey()).append("** - ").append(entry.getValue()).append("\n");
+                } else if (count == 3) {
+                    fieldToSave.append("\uD83E\uDD49 **").append(entry.getKey()).append("** - ").append(entry.getValue()).append("\n");
+                }
+
+                else {
+                    fieldToSave.append(count).append(". **").append(entry.getKey()).append("** - ").append(entry.getValue()).append("\n");
+                }
+
+                count++;
+                if (count > 10) {
+                    break;
+                }
+            }
+
+
+        }
+
+        else if (currentPage == 2) {
+
+            for (Document doc : collection.find()) {
+
+
+                int timestamp = doc.getInteger("timestamp");
+
+                if (timestamp  < endOfGivenYearUTS && timestamp >= startOfGivenYearUTS) {
+                    //scrobbleCounterForYear += 1;
+                    String artistName = doc.getString("artist") ;
+
+                    String trackName = doc.getString("track");
+                    List<String> trackArtistPair = new ArrayList<>();
+                    trackArtistPair.add(trackName);
+                    trackArtistPair.add(artistName);
+                    int currentCountTrack = tracksForYearNew.getOrDefault(trackArtistPair, 0);
+                    tracksForYearNew.put(trackArtistPair, currentCountTrack + 1);
+
+
+
+                }
+            }
+
+            List<Map.Entry<List<String>, Integer>> entryListTracks = new ArrayList<>(tracksForYearNew.entrySet());
+            entryListTracks.sort(Map.Entry.<List<String>, Integer>comparingByValue().reversed());
+
+
+
+            for (Map.Entry<List<String>, Integer> entry : entryListTracks) {
+                if (count == 1) {
+                    fieldToSave.append("\uD83E\uDD47 **").append(entry.getKey().get(0)).append("** - ").append(entry.getValue()).append("\n");
+                }
+                else if (count == 2) {
+                    fieldToSave.append("\uD83E\uDD48 **").append(entry.getKey().get(0)).append("** - ").append(entry.getValue()).append("\n");
+                }
+                else if (count == 3) {
+                    fieldToSave.append("\uD83E\uDD49 **").append(entry.getKey().get(0)).append("** - ").append(entry.getValue()).append("\n");
+                }
+
+                else {
+                    fieldToSave.append(count).append(". **").append(entry.getKey().get(0)).append("** - ").append(entry.getValue()).append("\n");
+
+                }
+
+
+                count++;
+                if (count > 10) {
+                    break;
+                }
+            }
+
+
+        } else if (currentPage == 3) {
+
+            for (Document doc : collection.find()) {
+
+                int timestamp = doc.getInteger("timestamp");
+
+                if (timestamp  < endOfGivenYearUTS && timestamp >= startOfGivenYearUTS) {
+                  //  scrobbleCounterForYear += 1;
+                    String artistName = doc.getString("artist") ;
+
+
+                    String albumName = doc.getString("album");
+                    List<String> albumArtistPair = new ArrayList<>();
+                    albumArtistPair.add(albumName);
+                    albumArtistPair.add(artistName);
+                    int currentCountAlbum = albumsForYearNew.getOrDefault(albumArtistPair, 0);
+                    albumsForYearNew.put(albumArtistPair, currentCountAlbum + 1);
+
+                }
+            }
+
+
+            List<Map.Entry<List<String>, Integer>> entryListAlbums = new ArrayList<>(albumsForYearNew.entrySet());
+            entryListAlbums.sort(Map.Entry.<List<String>, Integer>comparingByValue().reversed());
+
+
+
+            for (Map.Entry<List<String>, Integer> entry : entryListAlbums) {
+
+                if (count == 1) {
+                    fieldToSave.append("\uD83E\uDD47 **").append(entry.getKey().get(0)).append("**: ").append(entry.getValue()).append("\n");
+
+
+                }
+
+                else if (count == 2) {
+                    fieldToSave.append("\uD83E\uDD48 **").append(entry.getKey().get(0)).append("** - ").append(entry.getValue()).append("\n");
+
+
+                }
+
+                else if (count == 3) {
+                    fieldToSave.append("\uD83E\uDD49 **").append(entry.getKey().get(0)).append("** - ").append(entry.getValue()).append("\n");
+
+
+                }
+                else {
+                    fieldToSave.append(count).append(". ").append(entry.getKey().get(0)).append(" - ").append(entry.getValue()).append("\n");
+                }
+
+                count++;
+                if (count > 10) {
+                    break;
+                }
+            }
+
+
+
         }
 
 
-        List<Map.Entry<String, Integer>> entryListArtist = new ArrayList<>(artistsForYear.entrySet());
-        entryListArtist.sort(Map.Entry.<String, Integer>comparingByValue().reversed());
-
-
-
-        List<Map.Entry<List<String>, Integer>> entryListTracks = new ArrayList<>(tracksForYearNew.entrySet());
-        entryListTracks.sort(Map.Entry.<List<String>, Integer>comparingByValue().reversed());
-
-
-        List<Map.Entry<List<String>, Integer>> entryListAlbums = new ArrayList<>(albumsForYearNew.entrySet());
-        entryListAlbums.sort(Map.Entry.<List<String>, Integer>comparingByValue().reversed());
-
-        EmbedCreateSpec.Builder embedBuilder = Service.createEmbed("Your stats for " + year);
-
-        embedBuilder.addField("Total scrobbles: ", String.valueOf(scrobbleCounterForYear), false);
-
-        int count = 1;
-        StringBuilder artistField = new StringBuilder();
-        for (Map.Entry<String, Integer> entry : entryListArtist) {
-            artistField.append(count).append(". ").append(entry.getKey()).append(": ").append(entry.getValue()).append("\n");
-
-            count++;
-            if (count > 10) {
-                break;
-            }
-        }
-
-        embedBuilder.addField("Top 10 Artists", artistField.toString(), false);
-
-
-        embedBuilder.addField("Top 10 Tracks", " ", false);
-
-        int trackCount = 1;
-        StringBuilder trackField = new StringBuilder();
-
-        for (Map.Entry<List<String>, Integer> entry : entryListTracks) {
-            trackField.append(trackCount).append(". ").append(entry.getKey().get(0)).append(": ").append(entry.getValue()).append("\n");
-
-
-            trackCount++;
-            if (trackCount > 10) {
-                break;
-            }
-        }
-
-        embedBuilder.addField("Top 10 Tracks", trackField.toString(), false);
-
-
-
-        embedBuilder.addField("Top 10 Albums", " ", false);
-
-        int albumCount = 1;
-        for (Map.Entry<List<String>, Integer> entry : entryListAlbums) {
-            embedBuilder.addField(albumCount + ". " + entry.getKey().get(0) + ": " + entry.getValue(), "", false);
-            albumCount++;
-            if (albumCount > 10) {
-                break;
-            }
-        }
-
-        return message.getChannel().flatMap(channel -> channel.createMessage(embedBuilder.build()));
-
-
+        return fieldToSave;
 
     }
 
-    static Mono<?> getScrobblesInTimeframe(Message message, GatewayDiscordClient client) throws JsonProcessingException {
+
+
+
+    static Mono<?> getYearlyInfo(Message message, GatewayDiscordClient client) throws JsonProcessingException {
+
+        String[] command = message.getContent().split(" ");
+
+        String year = "2024";
+        if (command.length >= 2) {
+            year = command[1];
+            System.out.println("Year: " + year);
+        } else {
+            return message.getChannel().flatMap(channel -> channel.createMessage("Valid commands: $year 2023, $year 2022, $year 2021 etc"));
+
+        }
+
+
+        String username2 = client.getUserById(Snowflake.of(message.getAuthor().get().getId().asLong()))
+                .block()
+                .getUsername();
+
+
+        if (!message.getUserMentions().isEmpty()) {
+            username2 = message.getUserMentions().get(0).getUsername();
+        }
+
+        EmbedCreateSpec.Builder embedBuilder = Service.createEmbed(username2 + " stats for " + year);
+
+
+        //embedBuilder.addField("Total scrobbles: ", String.valueOf(scrobbleCounterForYear), false);
+
+
+        if (currentPage == 1) {
+            embedBuilder.addField("Top 10 Artists", getArtistTrackOrAlbumInfoForYear(year, client, message, username2).toString(), false);
+        }
+
+
+
+        Button nextButton = Button.secondary("next", "Next Page");
+        Button prevButton = Button.secondary("prev", "Prev Page");
+
+
+
+        ActionRow actionRow = ActionRow.of(nextButton, prevButton);
+
+
+        MessageCreateSpec messageCreateSpec = MessageCreateSpec.builder()
+                .addEmbed(embedBuilder.build())
+                .addComponent(actionRow)
+                .build();
+
+
+
+        return message.getChannel().flatMap(channel -> channel.createMessage(messageCreateSpec));
+    }
+
+    private static int currentPage = 1;
+
+    private static void handleButtonClick(Message message, Embed oldEmbed, GatewayDiscordClient client, boolean next) {
+
+        if (next) {
+            currentPage++;
+        } else {
+            currentPage--;
+        }
+
+
+        EmbedCreateSpec.Builder embedBuilder = EmbedCreateSpec.builder();
+        Embed.Author existingAuthor = oldEmbed.getAuthor().orElse(null);
+        String authorName = existingAuthor != null ? existingAuthor.getName().orElse(null) : null;
+        String authorUrl = existingAuthor != null ? existingAuthor.getUrl().orElse(null) : null;
+        String authorIconUrl = existingAuthor != null ? existingAuthor.getIconUrl().orElse(null) : null;
+
+        String totalScrobbles = oldEmbed.getFields().stream()
+                .filter(field -> "Total scrobbles:".equals(field.getName()))
+                .findFirst()
+                .map(Embed.Field::getValue)
+                .orElse(null);
+
+        String[] words = authorName.split("\\s+");
+        String year = words[words.length - 1];
+        String username = words[0];
+
+
+        embedBuilder.color(oldEmbed.getColor().get())
+                .author(EmbedCreateFields.Author.of(authorName, authorUrl, authorIconUrl));
+             //   .addField("Total scrobbles: ", totalScrobbles, false);
+
+
+        if (currentPage == 1) {
+            System.out.println("On page 1 so: artists");
+             embedBuilder.addField("Top 10 Artists", getArtistTrackOrAlbumInfoForYear(year, client, message, username).toString(), false);
+        }
+        if (currentPage == 2) {
+            System.out.println("On page 2 so: tracks");
+            embedBuilder.addField("Top 10 Tracks", getArtistTrackOrAlbumInfoForYear(year, client, message, username).toString(), false);
+
+        } if (currentPage == 3) {
+            System.out.println("On page 3 so: albums");
+            embedBuilder.addField("Top 10 Albums", getArtistTrackOrAlbumInfoForYear(year, client, message, username).toString(), false);
+        }
+
+        message.edit().withEmbeds(embedBuilder.build()).subscribe();
+    }
+
+    public static Mono<Void> handleButtonInteraction(ButtonInteractionEvent event, GatewayDiscordClient client) {
+        System.out.println("handling button interaction");
+        String customId = event.getCustomId();
+        Message message = event.getMessage().orElse(null);
+
+        if ("next".equals(customId)) {
+            handleButtonClick(message, message.getEmbeds().get(0), client, true);
+        } else if ("prev".equals(customId)) {
+            handleButtonClick(message, message.getEmbeds().get(0), client, false);
+        }
+
+        return Mono.empty();
+    }
+
+
+        static Mono<?> getScrobblesInTimeframe(Message message, GatewayDiscordClient client) throws JsonProcessingException {
 
         String[] command = message.getContent().split(" ");
 
@@ -202,8 +376,6 @@ public class UserScrobbleCommands {
             startOfGivenYearUTS = 1672570800;
             endOfGivenYearUTS = currentTimeUTS;
         } else {
-            System.out.println("This is start date: " + givenStartDateTime);
-            System.out.println("This is end date: " + givenEndDateTime);
 
             startOfGivenYearUTS = Service.convertToUnixTimestamp(givenStartDateTime);
             endOfGivenYearUTS = Service.convertToUnixTimestamp(givenEndDateTime);
