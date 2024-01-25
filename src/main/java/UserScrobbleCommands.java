@@ -28,7 +28,7 @@ public class UserScrobbleCommands {
 
     static String connectionString = System.getenv("CONNECTION_STRING");
 
-    static StringBuilder getArtistTrackOrAlbumInfoForYear(String year, GatewayDiscordClient client, Message message, String username) {
+    static StringBuilder getArtistTrackOrAlbumInfoForYear(String year, String username, String type) {
 
         StringBuilder fieldToSave = new StringBuilder();
 
@@ -58,14 +58,13 @@ public class UserScrobbleCommands {
         Map<String, Integer> artistsForYear = new HashMap<>();
         Map<List<String>, Integer> tracksForYearNew = new HashMap<>();
         Map<List<String>, Integer> albumsForYearNew = new HashMap<>();
-        if (currentPage == 1) {
+        if (Objects.equals(type, "artist")) {
 
             for (Document doc : collection.find()) {
 
                 int timestamp = doc.getInteger("timestamp");
 
                 if (timestamp  < endOfGivenYearUTS && timestamp >= startOfGivenYearUTS) {
-                   // scrobbleCounterForYear += 1;
                     String artistName = doc.getString("artist") ;
                     int currentCount = artistsForYear.getOrDefault(artistName, 0);
                     artistsForYear.put(artistName, currentCount + 1);
@@ -101,7 +100,7 @@ public class UserScrobbleCommands {
 
         }
 
-        else if (currentPage == 2) {
+        else if (type.equals("track")) {
 
             for (Document doc : collection.find()) {
 
@@ -153,7 +152,7 @@ public class UserScrobbleCommands {
             }
 
 
-        } else if (currentPage == 3) {
+        } else if (type.equals("album")) {
 
             for (Document doc : collection.find()) {
 
@@ -246,12 +245,126 @@ public class UserScrobbleCommands {
 
         EmbedCreateSpec.Builder embedBuilder = Service.createEmbed(username2 + " stats for " + year);
 
+        MongoClient mongoClient = MongoClients.create(connectionString);
+        MongoDatabase database = mongoClient.getDatabase("spongeybot");
+        MongoCollection<Document> users = database.getCollection("users");
+        Document userDocument = users.find(Filters.eq("username", username2)).first();
+        long userid = userDocument.getLong("userid");
 
-        //embedBuilder.addField("Total scrobbles: ", String.valueOf(scrobbleCounterForYear), false);
+
+        int prevYear = Integer.parseInt(year)-1;
+
+        MongoCollection<Document> yearCollection = database.getCollection(year);
+        Document userYearDocument = yearCollection.find(Filters.eq("username", username2)).first();
+
+        MongoCollection<Document> prevYearCollection = database.getCollection(String.valueOf(prevYear));
+        Document userPrevYearDocument = prevYearCollection.find(Filters.eq("username", username2)).first();
+
+
+        int totalScrobblesForYear;
+        int totalScrobblesForPrevYear;
+
+        int totalArtistsForYear;
+        int totalArtistsForPrevYear;
+
+        int totalTracksForYear;
+        int totalTracksForPrevYear;
+
+        String topTenArtistsForYear;
+        String topTenTracksForYear;
+        String topTenAlbumsForYear;
+
+        String topTenArtistsForPrevYear;
+        String topTenTracksForPrevYear;
+        String topTenAlbumsForPrevYear;
+
+
+        if (!year.equals("2024")) { //because 2024 always changing
+            if (userYearDocument != null) {
+                //extract info
+                System.out.println("We have " + year + " in db for user " + username2);
+                totalScrobblesForYear = userYearDocument.getInteger("totalScrobblesForYear");
+                totalArtistsForYear = userYearDocument.getInteger("totalArtistsForYear");
+                totalTracksForYear = userYearDocument.getInteger("totalTracksForYear");
+
+            } else {
+                // calculate the info then display and also save into db
+
+                System.out.println("Calculating for: " + year + " as we dont have in db yet");
+                totalScrobblesForYear =  Service.getTotalScrobblesForYear(Integer.parseInt(year), username2, userid);
+                totalArtistsForYear =  Service.getTotalArtistsForYear(Integer.parseInt(year), username2, userid);
+                totalTracksForYear =  Service.getTotalTracksForYear(Integer.parseInt(year), username2, userid);
+                topTenArtistsForYear =  getArtistTrackOrAlbumInfoForYear(year, username2, "artist").toString();
+                topTenTracksForYear =  getArtistTrackOrAlbumInfoForYear(year, username2, "track").toString();
+                topTenAlbumsForYear =  getArtistTrackOrAlbumInfoForYear(year, username2, "album").toString();
+
+                Document newUserYear = new Document("username", username2)
+                        .append("totalScrobblesForYear", totalScrobblesForYear)
+                        .append("totalArtistsForYear", totalArtistsForYear)
+                        .append("totalTracksForYear", totalTracksForYear)
+                        .append("topTenArtistsForYear", topTenArtistsForYear)
+                        .append("topTenTracksForYear", topTenTracksForYear)
+                        .append("topTenAlbumsForYear", topTenAlbumsForYear);
+
+                yearCollection.insertOne(newUserYear);
+            }
+        } else {
+            System.out.println("Year is 2024 so we are only calculating not saving");
+            totalScrobblesForYear =  Service.getTotalScrobblesForYear(Integer.parseInt(year), username2, userid);
+            totalArtistsForYear =  Service.getTotalArtistsForYear(Integer.parseInt(year), username2, userid);
+            totalTracksForYear =  Service.getTotalTracksForYear(Integer.parseInt(year), username2, userid);
+        }
+
+
+
+        //wanna get prev year too?
+        if (prevYear != 2024) { //because 2024 always changing
+
+            if (userPrevYearDocument != null) {
+                //extract info
+                System.out.println("We have " + prevYear + " in db for user " + username2);
+
+                totalScrobblesForPrevYear = userPrevYearDocument.getInteger("totalScrobblesForYear");
+                totalArtistsForPrevYear = userPrevYearDocument.getInteger("totalArtistsForYear");
+                totalTracksForPrevYear = userPrevYearDocument.getInteger("totalTracksForYear");
+
+            } else {
+                // calculate the info then display and also save into db
+                System.out.println("Calculating for: " + prevYear + " as we dont have in db yet");
+
+                totalScrobblesForPrevYear = Service.getTotalScrobblesForYear(prevYear, username2, userid);
+                totalArtistsForPrevYear = Service.getTotalArtistsForYear(prevYear, username2, userid);
+                totalTracksForPrevYear = Service.getTotalTracksForYear(prevYear, username2, userid);
+
+                topTenArtistsForPrevYear =  getArtistTrackOrAlbumInfoForYear(String.valueOf(prevYear), username2, "artist").toString();
+                topTenTracksForPrevYear =  getArtistTrackOrAlbumInfoForYear(String.valueOf(prevYear), username2, "track").toString();
+                topTenAlbumsForPrevYear =  getArtistTrackOrAlbumInfoForYear(String.valueOf(prevYear), username2, "album").toString();
+
+                Document newUserYear = new Document("username", username2)
+                        .append("totalScrobblesForYear", totalScrobblesForPrevYear)
+                        .append("totalArtistsForYear", totalArtistsForPrevYear)
+                        .append("totalTracksForYear", totalTracksForPrevYear)
+
+                        .append("topTenArtistsForYear", topTenArtistsForPrevYear)
+                        .append("topTenTracksForYear", topTenTracksForPrevYear)
+                        .append("topTenAlbumsForYear", topTenAlbumsForPrevYear);
+
+                prevYearCollection.insertOne(newUserYear);
+            }
+        } else {
+            System.out.println("Prev Year is 2024 so we are only calculating not saving");
+            totalScrobblesForPrevYear =  Service.getTotalScrobblesForYear(Integer.parseInt(year), username2, userid);
+            totalArtistsForPrevYear =  Service.getTotalArtistsForYear(Integer.parseInt(year), username2, userid);
+            totalTracksForPrevYear =  Service.getTotalTracksForYear(Integer.parseInt(year), username2, userid);
+        }
+
 
 
         if (currentPage == 1) {
-            embedBuilder.addField("Top 10 Artists", getArtistTrackOrAlbumInfoForYear(year, client, message, username2).toString(), false);
+            embedBuilder.addField("Total scrobbles", totalScrobblesForYear + " (" + getSign(totalScrobblesForYear, totalScrobblesForPrevYear) + " " + (totalScrobblesForYear - totalArtistsForPrevYear) + " from " + (Integer.parseInt(year)-1) + ") " , false);
+            embedBuilder.addField("Total Artists", totalArtistsForYear + " (" + getSign(totalArtistsForYear, totalArtistsForPrevYear) + " " + (totalArtistsForYear - totalArtistsForPrevYear) + " from " + (Integer.parseInt(year)-1) + ") " , false);
+            embedBuilder.addField("Total Tracks", totalTracksForYear + " (" + getSign(totalTracksForYear, totalTracksForPrevYear) + " " + (totalTracksForYear - totalTracksForPrevYear) + " from " + (Integer.parseInt(year)-1) + ") " , false);
+
         }
 
 
@@ -260,8 +373,7 @@ public class UserScrobbleCommands {
         Button prevButton = Button.secondary("prev", "Prev Page");
 
 
-
-        ActionRow actionRow = ActionRow.of(nextButton, prevButton);
+        ActionRow actionRow = ActionRow.of(prevButton, nextButton);
 
 
         MessageCreateSpec messageCreateSpec = MessageCreateSpec.builder()
@@ -274,9 +386,18 @@ public class UserScrobbleCommands {
         return message.getChannel().flatMap(channel -> channel.createMessage(messageCreateSpec));
     }
 
+
+    private static String getSign(int totalThisYear, int totalPrevYear) {
+        int difference = totalThisYear - totalPrevYear;
+        String sign;
+        if (difference >= 0) { sign = "up "; }
+        else { sign = "down "; }
+        return sign;
+    }
+
     private static int currentPage = 1;
 
-    private static void handleButtonClick(Message message, Embed oldEmbed, GatewayDiscordClient client, boolean next) {
+    private static void handleButtonClick(Message message, Embed oldEmbed, boolean next) {
 
         if (next) {
             currentPage++;
@@ -291,47 +412,63 @@ public class UserScrobbleCommands {
         String authorUrl = existingAuthor != null ? existingAuthor.getUrl().orElse(null) : null;
         String authorIconUrl = existingAuthor != null ? existingAuthor.getIconUrl().orElse(null) : null;
 
-        String totalScrobbles = oldEmbed.getFields().stream()
-                .filter(field -> "Total scrobbles:".equals(field.getName()))
-                .findFirst()
-                .map(Embed.Field::getValue)
-                .orElse(null);
 
         String[] words = authorName.split("\\s+");
         String year = words[words.length - 1];
         String username = words[0];
+        MongoClient mongoClient = MongoClients.create(connectionString);
+        MongoDatabase database = mongoClient.getDatabase("spongeybot");
+
+        int prevYear = Integer.parseInt(year)-1;
+
+        MongoCollection<Document> yearCollection = database.getCollection(year);
+        Document userYearDocument = yearCollection.find(Filters.eq("username", username)).first();
+
+        MongoCollection<Document> prevYearCollection = database.getCollection(String.valueOf(prevYear));
+        Document userPrevYearDocument = prevYearCollection.find(Filters.eq("username", username)).first();
+
+        int totalScrobblesForYear = userYearDocument.getInteger("totalScrobblesForYear");
+        int totalArtistsForYear = userYearDocument.getInteger("totalArtistsForYear");
+        int totalTracksForYear = userYearDocument.getInteger("totalTracksForYear");
+
+
+        int totalScrobblesForPrevYear = userPrevYearDocument.getInteger("totalScrobblesForYear");
+        int totalArtistsForPrevYear = userPrevYearDocument.getInteger("totalArtistsForYear");
+        int totalTracksForPrevYear = userPrevYearDocument.getInteger("totalTracksForYear");
 
 
         embedBuilder.color(oldEmbed.getColor().get())
                 .author(EmbedCreateFields.Author.of(authorName, authorUrl, authorIconUrl));
-             //   .addField("Total scrobbles: ", totalScrobbles, false);
+
 
 
         if (currentPage == 1) {
-            System.out.println("On page 1 so: artists");
-             embedBuilder.addField("Top 10 Artists", getArtistTrackOrAlbumInfoForYear(year, client, message, username).toString(), false);
+            embedBuilder.addField("Total scrobbles", totalScrobblesForYear + " (" + getSign(totalScrobblesForYear, totalScrobblesForPrevYear) + " " + (totalScrobblesForYear - totalScrobblesForPrevYear) + " from " + (Integer.parseInt(year)-1) + ") " , false);
+            embedBuilder.addField("Total Artists", totalArtistsForYear + " (" + getSign(totalArtistsForYear, totalArtistsForPrevYear) + " " + (totalArtistsForYear - totalArtistsForPrevYear) + " from " + (Integer.parseInt(year)-1) + ") " , false);
+            embedBuilder.addField("Total Tracks", totalTracksForYear + " (" + getSign(totalTracksForYear, totalTracksForPrevYear) + " " + (totalTracksForYear - totalTracksForPrevYear) + " from " + (Integer.parseInt(year)-1) + ") " , false);
+
         }
         if (currentPage == 2) {
-            System.out.println("On page 2 so: tracks");
-            embedBuilder.addField("Top 10 Tracks", getArtistTrackOrAlbumInfoForYear(year, client, message, username).toString(), false);
+             embedBuilder.addField("Top 10 Artists", userYearDocument.getString("topTenArtistsForYear"), false);
+        }
+        if (currentPage == 3) {
+            embedBuilder.addField("Top 10 Tracks", userYearDocument.getString("topTenTracksForYear"), false);
 
-        } if (currentPage == 3) {
-            System.out.println("On page 3 so: albums");
-            embedBuilder.addField("Top 10 Albums", getArtistTrackOrAlbumInfoForYear(year, client, message, username).toString(), false);
+        } if (currentPage == 4) {
+            embedBuilder.addField("Top 10 Albums", userYearDocument.getString("topTenAlbumsForYear"), false);
         }
 
         message.edit().withEmbeds(embedBuilder.build()).subscribe();
     }
 
-    public static Mono<Void> handleButtonInteraction(ButtonInteractionEvent event, GatewayDiscordClient client) {
-        System.out.println("handling button interaction");
+    public static Mono<Void> handleButtonInteraction(ButtonInteractionEvent event) throws JsonProcessingException {
         String customId = event.getCustomId();
         Message message = event.getMessage().orElse(null);
 
         if ("next".equals(customId)) {
-            handleButtonClick(message, message.getEmbeds().get(0), client, true);
+            handleButtonClick(message, message.getEmbeds().get(0), true);
         } else if ("prev".equals(customId)) {
-            handleButtonClick(message, message.getEmbeds().get(0), client, false);
+            handleButtonClick(message, message.getEmbeds().get(0), false);
         }
 
         return Mono.empty();
@@ -342,7 +479,7 @@ public class UserScrobbleCommands {
 
         String[] command = message.getContent().split(" ");
 
-        String year = "";
+        String year;
         if (command.length >= 2) {
             year = command[1];
             System.out.println("Year: " + year);

@@ -1,3 +1,4 @@
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mongodb.client.*;
@@ -17,7 +18,9 @@ import java.io.IOException;
 import java.time.*;
 import java.time.temporal.TemporalAdjusters;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 public class Service {
 
@@ -222,5 +225,122 @@ public class Service {
     }
 
 
+
+    static int getTotalScrobblesForYear(int year, String username, long userid) throws JsonProcessingException {
+
+        int scrobbleCounterForYear = 0;
+        int currentTimeUTS = (int) (System.currentTimeMillis() / 1000);
+
+        MongoClient mongoClient = MongoClients.create(connectionString);
+        MongoDatabase database = mongoClient.getDatabase("spongeybot");
+        MongoCollection<Document> collection = database.getCollection(username);
+
+        Bson filter = Filters.all("userId", userid);
+
+        long startOfGivenYearUTS;
+        long endOfGivenYearUTS;
+
+        LocalDateTime givenStartDateTime = LocalDateTime.of(year, Month.JANUARY, 1, 0, 0);
+        LocalDateTime givenEndDateTime = LocalDateTime.of(year, Month.DECEMBER, 31, 23, 59);
+
+            startOfGivenYearUTS = Service.convertToUnixTimestamp(givenStartDateTime);
+            endOfGivenYearUTS = Service.convertToUnixTimestamp(givenEndDateTime);
+
+
+
+        for (Document doc : collection.find(filter)) {
+            int timestamp = doc.getInteger("timestamp");
+
+            if (timestamp  < endOfGivenYearUTS && timestamp >= startOfGivenYearUTS) {
+                scrobbleCounterForYear += 1;
+            }
+        }
+
+      return scrobbleCounterForYear;
+
+    }
+
+
+
+    static int getTotalArtistsForYear(int year, String username, long userid) throws JsonProcessingException {
+
+        int artistCounterForYear = 0;
+        int currentTimeUTS = (int) (System.currentTimeMillis() / 1000);
+
+        MongoClient mongoClient = MongoClients.create(connectionString);
+        MongoDatabase database = mongoClient.getDatabase("spongeybot");
+        MongoCollection<Document> collection = database.getCollection(username);
+
+        Bson filter = Filters.all("userId", userid);
+
+        long startOfGivenYearUTS;
+        long endOfGivenYearUTS;
+
+        LocalDateTime givenStartDateTime = LocalDateTime.of(year, Month.JANUARY, 1, 0, 0);
+        LocalDateTime givenEndDateTime = LocalDateTime.of(year, Month.DECEMBER, 31, 23, 59);
+
+        startOfGivenYearUTS = Service.convertToUnixTimestamp(givenStartDateTime);
+        endOfGivenYearUTS = Service.convertToUnixTimestamp(givenEndDateTime);
+        Set<String> uniqueArtists = new HashSet<>();
+
+
+
+        for (Document doc : collection.find(filter)) {
+            int timestamp = doc.getInteger("timestamp");
+                String artist = doc.getString("artist");
+
+            if (timestamp  < endOfGivenYearUTS && timestamp >= startOfGivenYearUTS && (artist != null)) {
+                uniqueArtists.add(artist);
+            }
+
+        }
+
+        return uniqueArtists.size();
+
+    }
+
+
+
+    static int getTotalTracksForYear(int year, String username, long userid) throws JsonProcessingException {
+
+        int currentTimeUTS = (int) (System.currentTimeMillis() / 1000);
+
+        MongoClient mongoClient = MongoClients.create(connectionString);
+        MongoDatabase database = mongoClient.getDatabase("spongeybot");
+        MongoCollection<Document> collection = database.getCollection(username);
+
+        Bson filter = Filters.all("userId", userid);
+
+        long startOfGivenYearUTS;
+        long endOfGivenYearUTS;
+
+        LocalDateTime givenStartDateTime = LocalDateTime.of(year, Month.JANUARY, 1, 0, 0);
+        LocalDateTime givenEndDateTime = LocalDateTime.of(year, Month.DECEMBER, 31, 23, 59);
+
+        startOfGivenYearUTS = Service.convertToUnixTimestamp(givenStartDateTime);
+        endOfGivenYearUTS = Service.convertToUnixTimestamp(givenEndDateTime);
+
+
+
+        Set<String> uniqueTracks = new HashSet<>();
+
+        for (Document scrobble : collection.find(filter)) {
+            String track = scrobble.getString("track");
+            String artist = scrobble.getString("artist");
+            int timestamp = scrobble.getInteger("timestamp");
+
+            if (timestamp  < endOfGivenYearUTS && timestamp >= startOfGivenYearUTS && (track != null && artist != null)) {
+                String uniqueKey = track + "|" + artist;
+                uniqueTracks.add(uniqueKey);
+            }
+
+
+        }
+
+
+
+        return uniqueTracks.size();
+
+    }
 
 }

@@ -1166,7 +1166,13 @@ public class SpongeyBot {
                             .subscribe();
 
                     client.on(ButtonInteractionEvent.class)
-                            .flatMap(event -> UserScrobbleCommands.handleButtonInteraction(event, client))
+                            .flatMap(event -> {
+                                try {
+                                    return UserScrobbleCommands.handleButtonInteraction(event);
+                                } catch (JsonProcessingException e) {
+                                    throw new RuntimeException(e);
+                                }
+                            })
                             .subscribe();
 
                     return client.onDisconnect();
