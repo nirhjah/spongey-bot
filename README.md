@@ -2,7 +2,7 @@
 a discord bot that provides music listening stats provided by the last.fm website
 
 
-Features
+## Features
 #### See who knows an artist...
 ![image](https://github.com/nirhjah/spongey-bot/assets/34588618/b7cf1773-d3d6-4864-895b-4821ed1d8949)
 
