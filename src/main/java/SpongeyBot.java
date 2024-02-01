@@ -24,11 +24,14 @@ import reactor.core.publisher.Mono;
 
 import java.io.*;
 import java.net.*;
+import java.text.DecimalFormat;
 import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+
 import java.util.concurrent.TimeUnit;
 
+import static com.mongodb.client.model.Filters.*;
 
 
 public class SpongeyBot {
@@ -152,9 +155,9 @@ public class SpongeyBot {
 
                             //first check if track alr saved in tracks table with duration
                             Document foundTrack = tracks.find(
-                                    Filters.and(
-                                            Filters.eq("track", trackName),
-                                            Filters.eq("artist", artist)
+                                    and(
+                                            eq("track", trackName),
+                                            eq("artist", artist)
                                     )
                             ).maxTime(2, TimeUnit.HOURS).first();
 
@@ -229,7 +232,7 @@ public class SpongeyBot {
 
                 long totalDocuments = userScrobblesCollection.countDocuments();
 
-                System.out.println("Total docs now for " + username  + totalDocuments);
+                System.out.println("Total docs now for " + username  + ": " + totalDocuments);
 
             }
 
@@ -304,9 +307,9 @@ public class SpongeyBot {
 
                     //first check if track alr saved in tracks table with duration
                     Document foundTrack = tracks.find(
-                            Filters.and(
-                                    Filters.eq("track", trackName),
-                                    Filters.eq("artist", artist)
+                            and(
+                                    eq("track", trackName),
+                                    eq("artist", artist)
                             )
                     ).maxTime(2, TimeUnit.HOURS).first();
 
@@ -625,10 +628,10 @@ public class SpongeyBot {
 
 
         newTracks = (double) newTrackCount / trackMap.size();
-        double roundedTracks = Math.round(newTracks * 100.0) / 100.0;
+        double roundedTracks = Math.round(newTracks * 10.0) / 100.0;
 
         newArtists = (double) newArtistCount / artistMap.size();
-        double roundedArtists = Math.round(newArtists * 100.0) / 100.0;
+        double roundedArtists = Math.round(newArtists * 10.0) / 100.0;
 
 
 
@@ -639,7 +642,9 @@ public class SpongeyBot {
 
     }
 
-        static Mono<?> getOverview(Message message, GatewayDiscordClient client) throws JsonProcessingException {
+    static Mono<?> getOverview(Message message, GatewayDiscordClient client) throws JsonProcessingException {
+
+
 
         String username = client.getUserById(Snowflake.of(message.getAuthor().get().getId().asLong()))
                 .block()
@@ -657,8 +662,9 @@ public class SpongeyBot {
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
         MongoCollection<Document> userScrobblesCollection = database.getCollection(username);
         MongoCollection<Document> userCollection = database.getCollection("users");
+            MongoCollection<Document> overviewCollection = database.getCollection("overview");
 
-        Document userDocument = userCollection.find(Filters.eq("userid", userid)).first();
+        Document userDocument = userCollection.find(eq("userid", userid)).first();
 
         ZoneId userTimeZone = ZoneId.of(userDocument.getString("timezone"));
 
@@ -668,102 +674,277 @@ public class SpongeyBot {
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd MMMM yyyy");
         LocalDate currentDate = LocalDate.now(userTimeZone);
 
+
+
+
+            //for the last 5 days including today
         for (int i = 0; i < 5; i++) {
 
             LocalDate date = currentDate.minusDays(i);
             String dateWeLoopThrough = date.format(formatter);
 
-            ZonedDateTime startOfDay = date.atStartOfDay(userTimeZone);
-            ZonedDateTime endOfDay = date.plusDays(1).atStartOfDay(userTimeZone);
-
-            Bson filter = Filters.and(
-                    Filters.gte("timestamp", startOfDay.toEpochSecond()),
-                    Filters.lt("timestamp", endOfDay.toEpochSecond())
-            );
-
-            int scrobblesForDay = 0;
-            int timeScrobbled = 0;
-            Map<List<String>, Integer> topTrack = new HashMap<>(); //track,artist + count
-            Map<String, Integer> topArtist = new HashMap<>();
-            Map<List<String>, Integer> topAlbum = new HashMap<>(); //album,artist + count
+            //overview for date we loopin through
+            Document overview = overviewCollection.find(and(eq("date", date), eq("username", username))).first();
+            //if not null AND not currentdate (cuz we dont wanna save currentdate)
+            // then we wanna grab that info
+            //else (if non existent) we wanna create a new one
 
 
-
-            List<Document> relevantDocuments = new ArrayList<>();
-            userScrobblesCollection.find(filter).into(relevantDocuments);
-
-
-            for (Document doc : relevantDocuments) {
-
-                scrobblesForDay += 1;
-                timeScrobbled += doc.getInteger("duration");
+            if (overview != null && date != currentDate) {
+                System.out.println("There is an overview available for date: " + date + " so we are getting it");
 
 
-                List<String> trackArtistPair = new ArrayList<>();
-                trackArtistPair.add(doc.getString("track"));
-                trackArtistPair.add(doc.getString("artist"));
-                int currentCount = topTrack.getOrDefault(trackArtistPair, 0);
-                topTrack.put(trackArtistPair, currentCount + 1);
+                int scrobbles = overview.getInteger("scrobbles");
+                List<Double> trackAndArtistPercents = (List<Double>) overview.get("trackAndArtistPercents");
+                int time = overview.getInteger("time");
+                String topArtist = overview.getString("topArtist");
+                String topTrack = overview.getString("topTrack");
+                String topAlbum = overview.getString("topAlbum");
+
+                DecimalFormat df = new DecimalFormat("0.0%");
+                embedBuilder.addField(dateWeLoopThrough, scrobbles + " scrobbles | " + time/60 + " minutes\n " + df.format(trackAndArtistPercents.get(0)) + " new tracks | " + df.format(trackAndArtistPercents.get(1)) + " new artists" + "\n Top Artist: " + topArtist +  "\nTop Album: " + topAlbum + "\nTop Track: " + topTrack, false);
 
 
-                List<String> albumArtistPair = new ArrayList<>();
-                albumArtistPair.add(doc.getString("album"));
-                albumArtistPair.add(doc.getString("artist"));
-                int currentCountAlbum = topAlbum.getOrDefault(albumArtistPair, 0);
-                topAlbum.put(albumArtistPair, currentCountAlbum + 1);
+            } if (overview == null && date != currentDate) {
+                System.out.println("No overview for " + date + " so creating new");
+                //create new document for user for the date
+
+                ZonedDateTime startOfDay = date.atStartOfDay(userTimeZone);
+                ZonedDateTime endOfDay = date.plusDays(1).atStartOfDay(userTimeZone);
+
+                Bson filter = and(
+                        Filters.gte("timestamp", startOfDay.toEpochSecond()),
+                        lt("timestamp", endOfDay.toEpochSecond())
+                );
+
+                int scrobblesForDay = 0;
+                int timeScrobbled = 0;
+                Map<List<String>, Integer> topTrack = new HashMap<>(); //track,artist + count
+                Map<String, Integer> topArtist = new HashMap<>();
+                Map<List<String>, Integer> topAlbum = new HashMap<>(); //album,artist + count
 
 
-                int currentCountArtist = topArtist.getOrDefault(doc.getString("artist"), 0);
-                topArtist.put(doc.getString("artist"), currentCountArtist + 1);
+                List<Document> relevantDocuments = new ArrayList<>();
+                userScrobblesCollection.find(filter).into(relevantDocuments);
 
+                for (Document doc : relevantDocuments) {
+
+                    //FIELD: SCROBBLES
+                    //FIELD: TIMESCROBBLED
+                    scrobblesForDay += 1;
+                    timeScrobbled += doc.getInteger("duration");
+
+
+                    List<String> trackArtistPair = new ArrayList<>();
+                    trackArtistPair.add(doc.getString("track"));
+                    trackArtistPair.add(doc.getString("artist"));
+                    int currentCount = topTrack.getOrDefault(trackArtistPair, 0);
+                    topTrack.put(trackArtistPair, currentCount + 1);
+
+
+                    List<String> albumArtistPair = new ArrayList<>();
+                    albumArtistPair.add(doc.getString("album"));
+                    albumArtistPair.add(doc.getString("artist"));
+                    int currentCountAlbum = topAlbum.getOrDefault(albumArtistPair, 0);
+                    topAlbum.put(albumArtistPair, currentCountAlbum + 1);
+
+
+                    int currentCountArtist = topArtist.getOrDefault(doc.getString("artist"), 0);
+                    topArtist.put(doc.getString("artist"), currentCountArtist + 1);
+
+
+                }
+
+
+                List<Map.Entry<List<String>, Integer>> listOfTopTracks = new ArrayList<>(topTrack.entrySet());
+                Collections.sort(listOfTopTracks, Map.Entry.<List<String>, Integer>comparingByValue().reversed());
+
+                List<Map.Entry<List<String>, Integer>> listOfTopAlbums = new ArrayList<>(topAlbum.entrySet());
+                Collections.sort(listOfTopAlbums, Map.Entry.<List<String>, Integer>comparingByValue().reversed());
+
+
+                List<Map.Entry<String, Integer>> listOfTopArtist = new ArrayList<>(topArtist.entrySet());
+                Collections.sort(listOfTopArtist, Map.Entry.<String, Integer>comparingByValue().reversed());
+
+
+                String topArtistString;
+                String topTrackString;
+                String topAlbumString;
+
+                if (listOfTopArtist.isEmpty()) {
+                    topArtistString = "";
+
+                }
+                else {
+                    //FIELD: TOP ARTIST STRING
+                    topArtistString = listOfTopArtist.get(0).getKey() + " - " + listOfTopArtist.get(0).getValue() + " plays";
+                }
+
+
+                if (listOfTopTracks.isEmpty()) {
+                    topTrackString = "";
+
+                } else {
+                    //FIELD: TOP TRACK STRING
+                    topTrackString = listOfTopTracks.get(0).getKey().get(0) + " - " + listOfTopTracks.get(0).getKey().get(1) + " - " + listOfTopTracks.get(0).getValue() + " plays";
+                }
+
+
+                if (listOfTopAlbums.isEmpty()) {
+                    topAlbumString = ""; } else {
+                    //FIELD: TOP ALBUM STRING
+                    topAlbumString = listOfTopAlbums.get(0).getKey().get(0) + " - " + listOfTopAlbums.get(0).getKey().get(1) + " - " + listOfTopAlbums.get(0).getValue() + " plays";
+                }
+
+
+                //FIELD: TRACK AND ARTIST PERCENTS
+                List<Double> trackAndArtistPercents = getNewArtistsAndTracks(relevantDocuments, userScrobblesCollection);
+
+
+
+                Document newUsersOverviewForDate = new Document("username", username)
+                        .append("date", date)
+                        .append("scrobbles", scrobblesForDay)
+                        .append("time", timeScrobbled)
+                        .append("topArtist", topArtistString)
+                        .append("topTrack", topTrackString)
+                        .append("topAlbum", topAlbumString)
+                        .append("trackAndArtistPercents", trackAndArtistPercents);
+
+                overviewCollection.insertOne(newUsersOverviewForDate);
+                DecimalFormat df = new DecimalFormat("0.0%");
+
+                embedBuilder.addField(dateWeLoopThrough, scrobblesForDay + " scrobbles | " + timeScrobbled/60 + " minutes\n " + df.format(trackAndArtistPercents.get(0)) + " new tracks | " + df.format(trackAndArtistPercents.get(1)) + " new artists" + "\n Top Artist: " + topArtistString +  "\nTop Album: " + topAlbumString + "\nTop Track: " + topTrackString, false);
+
+
+            } if (date == currentDate) {
+
+                System.out.println("Overview for today's date: " + currentDate + " so just showing not creating");
+
+                ZonedDateTime startOfDay = date.atStartOfDay(userTimeZone);
+                ZonedDateTime endOfDay = date.plusDays(1).atStartOfDay(userTimeZone);
+
+                Bson filter = and(
+                        Filters.gte("timestamp", startOfDay.toEpochSecond()),
+                        lt("timestamp", endOfDay.toEpochSecond())
+                );
+
+                int scrobblesForDay;
+                int timeScrobbled = 0;
+                Map<List<String>, Integer> topTrack = new HashMap<>(); //track,artist + count
+                Map<String, Integer> topArtist = new HashMap<>();
+                Map<List<String>, Integer> topAlbum = new HashMap<>(); //album,artist + count
+
+
+                List<Document> relevantDocuments = new ArrayList<>();
+                userScrobblesCollection.find(filter).into(relevantDocuments);
+
+                scrobblesForDay = relevantDocuments.size();
+                for (Document doc : relevantDocuments) {
+
+                    //FIELD: SCROBBLES
+                    //FIELD: TIMESCROBBLED
+                    timeScrobbled += doc.getInteger("duration");
+
+
+                    List<String> trackArtistPair = new ArrayList<>();
+                    trackArtistPair.add(doc.getString("track"));
+                    trackArtistPair.add(doc.getString("artist"));
+                    int currentCount = topTrack.getOrDefault(trackArtistPair, 0);
+                    topTrack.put(trackArtistPair, currentCount + 1);
+
+
+                    List<String> albumArtistPair = new ArrayList<>();
+                    albumArtistPair.add(doc.getString("album"));
+                    albumArtistPair.add(doc.getString("artist"));
+                    int currentCountAlbum = topAlbum.getOrDefault(albumArtistPair, 0);
+                    topAlbum.put(albumArtistPair, currentCountAlbum + 1);
+
+
+                    int currentCountArtist = topArtist.getOrDefault(doc.getString("artist"), 0);
+                    topArtist.put(doc.getString("artist"), currentCountArtist + 1);
+
+
+                }
+
+
+                List<Map.Entry<List<String>, Integer>> listOfTopTracks = new ArrayList<>(topTrack.entrySet());
+                Collections.sort(listOfTopTracks, Map.Entry.<List<String>, Integer>comparingByValue().reversed());
+
+                List<Map.Entry<List<String>, Integer>> listOfTopAlbums = new ArrayList<>(topAlbum.entrySet());
+                Collections.sort(listOfTopAlbums, Map.Entry.<List<String>, Integer>comparingByValue().reversed());
+
+
+                List<Map.Entry<String, Integer>> listOfTopArtist = new ArrayList<>(topArtist.entrySet());
+                Collections.sort(listOfTopArtist, Map.Entry.<String, Integer>comparingByValue().reversed());
+
+
+                String topArtistString;
+                String topTrackString;
+                String topAlbumString;
+
+                if (listOfTopArtist.isEmpty()) {
+                    topArtistString = "";
+
+                }
+                else {
+                    //FIELD: TOP ARTIST STRING
+                    topArtistString = listOfTopArtist.get(0).getKey() + " - " + listOfTopArtist.get(0).getValue() + " plays";
+                }
+
+
+                if (listOfTopTracks.isEmpty()) {
+                    topTrackString = "";
+
+                } else {
+                    //FIELD: TOP TRACK STRING
+                    topTrackString = listOfTopTracks.get(0).getKey().get(0) + " - " + listOfTopTracks.get(0).getKey().get(1) + " - " + listOfTopTracks.get(0).getValue() + " plays";
+                }
+
+
+                if (listOfTopAlbums.isEmpty()) {
+                    topAlbumString = ""; } else {
+                    //FIELD: TOP ALBUM STRING
+                    topAlbumString = listOfTopAlbums.get(0).getKey().get(0) + " - " + listOfTopAlbums.get(0).getKey().get(1) + " - " + listOfTopAlbums.get(0).getValue() + " plays";
+                }
+
+
+                //FIELD: TRACK AND ARTIST PERCENTS
+                List<Double> trackAndArtistPercents = getNewArtistsAndTracks(relevantDocuments, userScrobblesCollection);
+
+
+                DecimalFormat df = new DecimalFormat("0.0%");
+
+                embedBuilder.addField(dateWeLoopThrough, scrobblesForDay + " scrobbles | " + timeScrobbled/60 + " minutes\n " + df.format(trackAndArtistPercents.get(0)) + " new tracks | " + df.format(trackAndArtistPercents.get(1)) + " new artists" + "\n Top Artist: " + topArtistString +  "\nTop Album: " + topAlbumString + "\nTop Track: " + topTrackString, false);
 
             }
 
+        // Cleaning old data
+          //  Date fiveDaysAgo = Date.from(LocalDate.now().minusDays(5).atStartOfDay(ZoneId.systemDefault()).toInstant());
 
-            List<Map.Entry<List<String>, Integer>> listOfTopTracks = new ArrayList<>(topTrack.entrySet());
-            Collections.sort(listOfTopTracks, Map.Entry.<List<String>, Integer>comparingByValue().reversed());
+            LocalDate currentDate2 = LocalDate.now();
 
-            List<Map.Entry<List<String>, Integer>> listOfTopAlbums = new ArrayList<>(topAlbum.entrySet());
-            Collections.sort(listOfTopAlbums, Map.Entry.<List<String>, Integer>comparingByValue().reversed());
+            // Subtract 5 days from the current date
+            LocalDate fiveDaysAgo = currentDate2.minusDays(5);
 
-
-            List<Map.Entry<String, Integer>> listOfTopArtist = new ArrayList<>(topArtist.entrySet());
-            Collections.sort(listOfTopArtist, Map.Entry.<String, Integer>comparingByValue().reversed());
-
-
-            String topArtistString;
-            String topTrackString;
-            String topAlbumString;
-
-            if (listOfTopArtist.isEmpty()) {
-                topArtistString = "";
-
-            }
-            else {
-                topArtistString = listOfTopArtist.get(0).getKey() + " - " + listOfTopArtist.get(0).getValue() + " plays";
-            }
+            System.out.println("five days ago: " + fiveDaysAgo);
+            //todo check this works
+       /*     overviewCollection.deleteMany(and(
+                    eq("username", username),
+                    lt("date", fiveDaysAgo)));
 
 
-            if (listOfTopTracks.isEmpty()) {
-                topTrackString = "";
+*/
 
-            } else {
-                topTrackString = listOfTopTracks.get(0).getKey().get(0) + " - " + listOfTopTracks.get(0).getKey().get(1) + " - " + listOfTopTracks.get(0).getValue() + " plays";
-            }
-
-
-            if (listOfTopAlbums.isEmpty()) {
-                topAlbumString = ""; } else {
-                topAlbumString = listOfTopAlbums.get(0).getKey().get(0) + " - " + listOfTopAlbums.get(0).getKey().get(1) + " - " + listOfTopAlbums.get(0).getValue() + " plays";
-            }
-
-
-
-            List<Double> trackAndArtistPercents = getNewArtistsAndTracks(relevantDocuments, userScrobblesCollection);
-
-
-            embedBuilder.addField(dateWeLoopThrough, scrobblesForDay + " scrobbles | " + timeScrobbled/60 + " minutes\n " + trackAndArtistPercents.get(0)*100 + "% new tracks | " + trackAndArtistPercents.get(1)*100 + "% new artists" + "\n Top Artist: " + topArtistString +  "\nTop Album: " + topAlbumString + "\nTop Track: " + topTrackString, false);
+            //end
         }
+
+     /*   Bson filter = and(
+                eq("username", username),
+                lt("date", Date.from(LocalDate.now().minusDays(5).atStartOfDay(ZoneId.systemDefault()).toInstant())));
+
+
+*/
 
         return message.getChannel().flatMap(channel -> channel.createMessage(embedBuilder.build()));
 
@@ -772,23 +953,23 @@ public class SpongeyBot {
     static Mono<?> helpCommand(Message message) {
 
         EmbedCreateSpec.Builder embedBuilder = Service.createEmbed("Help")
-                .addField("", "$wkt", false)
-                .addField("", "$toptracks", false)
                 .addField("", "$login", false)
                 .addField("", "$scrobbles 2021, $scrobbles 2023 etc", false)
                 .addField("", "$year 2023, $year 2022 etc", false)
                 .addField("", "$topscrobbleddays", false)
 
-                .addField("random trakc info", "$trackinfo", false)
+                .addField("Tracks", "$trackinfo\n $toptracks\n $wkt", false)
 
                 .addField("Artists", "$artisttime\n $artisttracks\n $a\n $topartists\n $wk", false)
 
                 .addField("Leaderboards", "$scrobblelb\n $timelb\n $artistlb\n $tracklb", false)
 
-                .addField("crowns stuff", "$crownlb\n $crowns\n $crownsclose", false)
+                .addField("Crowns", "$crownlb\n $crowns\n $crownsclose", false)
+
+                .addField("Featured", "$featured\n $featuredlog\n", false)
 
 
-                .addField("", "ALSO SOME COMMANDS ALLOW U TO MENTION USERS AT THE END TO CHEcK THEIR STATS", false)
+                .addField("", "Some commands allow you to mention other users, to see their stats", false)
 
                 .addField("", "more features coming soon", false);
 
@@ -799,56 +980,214 @@ public class SpongeyBot {
 
     static Mono<?> updateBotPic(Message message, ObjectMapper objectMapper, CloseableHttpClient httpClient, GatewayDiscordClient client, MessageCreateEvent event) throws IOException {
 
-        //Getting current day
-        String day = LocalDate.now().getDayOfWeek().name();
-
-        System.out.println("THis is day: " + day);
 
         MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
         MongoCollection<Document> collection = database.getCollection("users");
+        MongoCollection<Document> featuredCollection = database.getCollection("featured");
+        MongoCollection<Document> days = database.getCollection("featuredDays");
+
+
+        DayOfWeek currentDay = LocalDate.now().getDayOfWeek();
+
+        if (Objects.equals(currentDay.toString(), "MONDAY")) {
+            System.out.println("Today is Monday so we are assigning days to users");
+
+
+            List<String> users = new ArrayList<>();
+            Map<String, Integer> userDayAssignments = new HashMap<>();
+
+            for (Document user : collection.find()) {
+                String username = user.getString("username");
+                users.add(username);
+                userDayAssignments.put(username, 0);
+            }
+
+            List<String> daysOfWeek = new ArrayList<>(Arrays.asList("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"));
+
+            Collections.shuffle(users);
+
+            Random random = new Random();
+
+
+            for (String user : users) {
+                int randomDayVal = random.nextInt(daysOfWeek.size());
+                String day = daysOfWeek.get(randomDayVal);
+                if (userDayAssignments.get(user) == 0) {
+                    userDayAssignments.put(user, userDayAssignments.get(user) + 1);
+                    System.out.println("Day: " + day + " for user: " + user);
+
+                    Document query = new Document("day", day);
+
+                    Document update = new Document("$set", new Document("username", user));
+
+                    days.updateOne(query, update);
+
+                    daysOfWeek.remove(day);
+
+                }
+
+            }
+
+            System.out.println("days now: " + daysOfWeek);
+
+
+            for (String day: daysOfWeek) {
+                System.out.println(day);
+                int randomUserVal = random.nextInt(users.size());
+                String user = users.get(randomUserVal);
+
+                Document query = new Document("day", day);
+
+                Document update = new Document("$set", new Document("username", user));
+
+                days.updateOne(query, update);
+
+                daysOfWeek.remove(day);
+
+            }
+        }
+
+
+
+        //Finished assignment of days
+
+        //Getting current day
+        String day = LocalDate.now().getDayOfWeek().name();
+
+
+        //first check if this command has been run today already so by check if date filter
+        Bson dateFilter = Filters.all("date", LocalDate.now());
+
+        Document featuredDocAlready = featuredCollection.find(dateFilter).first();
 
 
         //getting user who is featured today
-        Bson filter = Filters.all("featuredDay", day);
-        Document featuredUserDocument = collection.find(filter).first();
 
 
 
-        //getting above users top weekly album
+        Bson filter = Filters.regex("day", day, "i");
 
-        String userSessionKey = (String) featuredUserDocument.get("sessionkey");
+        System.out.println("This is filter: " + filter);
+       String username = days.find(filter).first().getString("username");
 
-        long userId = featuredUserDocument.getLong("userid");
-
-        String url = BASE_URL + "?method=user.gettopalbums&api_key=" + API_KEY + "&sk=" + userSessionKey  + "&limit=1" + "&period=7day" + "&format=json";
-        System.out.println(url);
-        JsonNode rootNode =  Service.getJsonNodeFromUrl(objectMapper, url, httpClient);
-        JsonNode albumNode = rootNode.path("topalbums").path("album");
-        String firstAlbumNode = albumNode.get(0).path("image").get(2).path("#text").asText();
-        System.out.println("album image: " + firstAlbumNode);
-
-        //Get username
-        String username = client.getUserById(Snowflake.of(userId))
-                .block()
-                .getUsername();
-
-        //set it to the bot picture
-        Image image = Image.ofUrl(firstAlbumNode).block();
-
-
-        event.getClient().edit().withAvatar(image).block();
-
-        client.updatePresence(ClientPresence.online(ClientActivity.playing(username + "'s top album of the week!"))).block();
+       Bson filterUser = Filters.all("username", username);
+       String userSessionKey = (String) collection.find(filterUser).first().get("sessionkey");
+        long userId = collection.find(filterUser).first().getLong("userid");
 
 
 
-        return message.getChannel().flatMap(channel -> channel.createMessage(username + " is today's featured user :D"));
+
+        if (featuredDocAlready != null) {
+            System.out.println("Already ran pic command so updating status only:");
+
+            //already ran this command and have featured so just set status of bot
+            client.updatePresence(ClientPresence.online(ClientActivity.playing(username + "'s top album of the week!"))).block();
+
+        } else {
+            //none yet so do it everything
+            System.out.println("First time running command update pic today:");
+            String url = BASE_URL + "?method=user.gettopalbums&api_key=" + API_KEY + "&sk=" + userSessionKey  + "&limit=1" + "&period=7day" + "&format=json";
+            System.out.println(url);
+            JsonNode rootNode =  Service.getJsonNodeFromUrl(objectMapper, url, httpClient);
+            JsonNode albumNode = rootNode.path("topalbums").path("album");
+            String firstAlbumNode = albumNode.get(0).path("image").get(2).path("#text").asText();
+            String artistName = albumNode.get(0).path("artist").path("name").asText();
+            String albumName = albumNode.get(0).path("name").asText();
+            System.out.println("album image: " + firstAlbumNode);
+
+            //set it to the bot picture
+            Image image = Image.ofUrl(firstAlbumNode).block();
+            event.getClient().edit().withAvatar(image).block();
+            client.updatePresence(ClientPresence.online(ClientActivity.playing(username + "'s top album of the week!"))).block();
+
+            LocalDate currentDate = LocalDate.now();
+            Document newFeatured = new Document("username", username)
+                    .append("artist", artistName)
+                    .append("album", albumName)
+                    .append("albumImage", firstAlbumNode)
+                    .append("date", currentDate);
+            featuredCollection.insertOne(newFeatured);
+            return message.getChannel().flatMap(channel -> channel.createMessage(username + " is today's featured user :D"));
+
+        }
+
+        return Mono.empty();
+
+    }
+
+    static Mono<?> featuredCommand(Message message) {
+
+        MongoClient mongoClient = MongoClients.create(connectionString);
+        MongoDatabase database = mongoClient.getDatabase("spongeybot");
+        MongoCollection<Document> featuredCollection = database.getCollection("featured");
+
+        Bson dateFilter = Filters.all("date", LocalDate.now());
+
+
+        Document featuredUserDocument = featuredCollection.find(dateFilter).first();
+
+        EmbedCreateSpec.Builder embedBuilder = Service.createEmbed("Today's featured user: " + featuredUserDocument.getString("username"));
+
+        embedBuilder.addField("", "Artist: " + featuredUserDocument.getString("artist"), false);
+        embedBuilder.addField("", "Album: " + featuredUserDocument.getString("album"), false);
+
+        embedBuilder.thumbnail(featuredUserDocument.getString("albumImage"));
+        return message.getChannel().flatMap(channel -> channel.createMessage(embedBuilder.build()));
 
     }
 
 
-        static Mono<?> loginCommand(Message message, ObjectMapper objectMapper, CloseableHttpClient httpClient) {
+
+    static Mono<?> featuredLogCommand(Message message, GatewayDiscordClient client) {
+
+        long userid = message.getAuthor().get().getId().asLong();
+
+        String username = client.getUserById(Snowflake.of(userid))
+                .block()
+                .getUsername();
+
+
+        if (!message.getUserMentions().isEmpty()) {
+            username = message.getUserMentions().get(0).getUsername();
+        }
+
+        MongoClient mongoClient = MongoClients.create(connectionString);
+        MongoDatabase database = mongoClient.getDatabase("spongeybot");
+        MongoCollection<Document> featuredCollection = database.getCollection("featured");
+
+        Bson userFilter = Filters.all("username", username);
+
+
+        EmbedCreateSpec.Builder embedBuilder = Service.createEmbed(username + "'s featured log");
+
+        FindIterable<Document> documents = featuredCollection.find(userFilter);
+
+        MongoCursor<Document> cursor = documents.iterator();
+
+        if (!cursor.hasNext()) {
+            // No documents found
+            embedBuilder.addField("You haven't been featured yet :(", "", false);
+        } else {
+            // Documents found
+            for (Document document : documents) {
+                embedBuilder.addField(document.get("date").toString(), "Artist: " + document.getString("artist") + "\nAlbum: " + document.getString("album"), false);
+
+            }
+
+        }
+
+
+
+
+
+
+        return message.getChannel().flatMap(channel -> channel.createMessage(embedBuilder.build()));
+
+    }
+
+
+    static Mono<?> loginCommand(Message message, ObjectMapper objectMapper, CloseableHttpClient httpClient) {
 
         MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
@@ -931,16 +1270,19 @@ public class SpongeyBot {
     }
 
 
-    private static Mono<?> handleMessage(MessageCreateEvent event, ObjectMapper objectMapper, CloseableHttpClient httpClient, GatewayDiscordClient client) {
+    private static Mono<?> handleMessage(MessageCreateEvent event, ObjectMapper objectMapper, CloseableHttpClient httpClient, GatewayDiscordClient client) throws Exception {
         Message message = event.getMessage();
-        String content = message.getContent();
 
         if (message.getContent().startsWith("$scrobblelb")) {
-            return LeaderboardCommands.scrobbleLbCommand(message,objectMapper, httpClient, client);
+            return LeaderboardCommands.scrobbleLbCommand(message, client);
         }
 
-        if (message.getContent().equalsIgnoreCase("$a")) {
+        if (message.getContent().startsWith("$artistinfo")) {
             return ArtistCommands.artistInfoCommand(message,objectMapper, httpClient, client);
+        }
+
+        if (message.getContent().startsWith("$tracksnotlistened")) {
+            return ArtistCommands.tracksNotListenedTo(message,objectMapper, httpClient, client);
         }
 
         if (message.getContent().startsWith("$wkt")) {
@@ -952,16 +1294,18 @@ public class SpongeyBot {
                 return ArtistCommands.wkCommand(message, objectMapper, httpClient, client);
             } catch (JsonProcessingException e) {
                 throw new RuntimeException(e);
+            } catch (Exception e) {
+                throw new RuntimeException(e);
             }
         }
 
 
         if (message.getContent().equalsIgnoreCase("$topartists")) {
-            return ArtistCommands.topArtistsCommand(message, objectMapper, httpClient, client);
+            return ArtistCommands.topArtistsCommand(message, objectMapper, httpClient);
         }
 
         if (message.getContent().equalsIgnoreCase("$toptracks")) {
-            return TrackCommands.topTracksCommand(message, objectMapper, httpClient, client);
+            return TrackCommands.topTracksCommand(message, objectMapper, httpClient);
         }
 
         if (message.getContent().equalsIgnoreCase("$login")) {
@@ -1023,6 +1367,15 @@ public class SpongeyBot {
             }
         }
 
+        if (message.getContent().equals("$featured")) {
+          return featuredCommand(message);
+        }
+
+
+        if (message.getContent().startsWith("$featuredlog")) {
+            return featuredLogCommand(message, client);
+        }
+
 
 
         if (message.getContent().equalsIgnoreCase("$update")) {
@@ -1042,7 +1395,7 @@ public class SpongeyBot {
             }
         }
 
-        if (message.getContent().startsWith("$at")) {
+        if (message.getContent().startsWith("$artisttracks")) {
             try {
                 return ArtistCommands.getArtistTracks(message, client);
             } catch (JsonProcessingException e) {
@@ -1154,7 +1507,6 @@ public class SpongeyBot {
     public static void main(String[] args) {
 
 
-
             ObjectMapper objectMapper = new ObjectMapper();
         CloseableHttpClient httpClient = HttpClients.createDefault();
 
@@ -1162,7 +1514,13 @@ public class SpongeyBot {
         DiscordClient.create(BOT_TOKEN)
                 .withGateway(client -> {
                     client.on(MessageCreateEvent.class)
-                            .flatMap(event -> handleMessage(event, objectMapper, httpClient, client))
+                            .flatMap(event -> {
+                                try {
+                                    return handleMessage(event, objectMapper, httpClient, client);
+                                } catch (Exception e) {
+                                    throw new RuntimeException(e);
+                                }
+                            })
                             .subscribe();
 
                     client.on(ButtonInteractionEvent.class)

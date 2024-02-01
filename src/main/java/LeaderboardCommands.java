@@ -1,5 +1,4 @@
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import com.mongodb.client.MongoCollection;
@@ -9,7 +8,6 @@ import discord4j.common.util.Snowflake;
 import discord4j.core.GatewayDiscordClient;
 import discord4j.core.object.entity.Message;
 import discord4j.core.spec.EmbedCreateSpec;
-import org.apache.http.impl.client.CloseableHttpClient;
 import org.bson.Document;
 import org.bson.conversions.Bson;
 import reactor.core.publisher.Mono;
@@ -24,7 +22,7 @@ public class LeaderboardCommands {
 
 
 
-    static Mono<?> scrobbleLbCommand(Message message, ObjectMapper objectMapper, CloseableHttpClient httpClient, GatewayDiscordClient client) {
+    static Mono<?> scrobbleLbCommand(Message message, GatewayDiscordClient client) {
 
 
         String[] command = message.getContent().split(" ");
@@ -114,7 +112,7 @@ public class LeaderboardCommands {
         String[] command = message.getContent().split(" ");
 
 
-        String timePeriod = "";
+        String timePeriod;
         if (command.length >= 2) {
             timePeriod = command[1];
             System.out.println("timePeriod: " + timePeriod);

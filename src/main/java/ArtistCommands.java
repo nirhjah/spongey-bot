@@ -32,7 +32,91 @@ public class ArtistCommands {
     private static final String API_KEY = System.getenv().get("API_KEY");
 
 
-    static Mono<?> wkCommand(Message message, ObjectMapper objectMapper, CloseableHttpClient httpClient, GatewayDiscordClient client) throws JsonProcessingException {
+    private static final String SPOTIFY_CLIENT_ID = System.getenv().get("SPOTIFY_CLIENT_ID");
+
+
+    private static final String SPOTIFY_CLIENT_SECRET = System.getenv().get("SPOTIFY_CLIENT_SECRET");
+
+
+    static Mono<?> tracksNotListenedTo(Message message, ObjectMapper objectMapper, CloseableHttpClient httpClient, GatewayDiscordClient client) throws Exception {
+        String[] command = message.getContent().split(" ");
+
+
+        String artistName = "";
+        long userid = message.getAuthor().get().getId().asLong();
+
+        String username = client.getUserById(Snowflake.of(userid))
+                .block()
+                .getUsername();
+
+        if (!message.getUserMentions().isEmpty()) {
+            username = message.getUserMentions().get(0).getUsername();
+        }
+
+
+        if (command.length >= 2) {
+            if (!message.getUserMentions().isEmpty()) {
+                artistName = Arrays.stream(command)
+                        .collect(Collectors.toList())
+                        .subList(0, command.length - 1)
+                        .stream()
+                        .skip(1)
+                        .collect(Collectors.joining("+"));
+
+            } else {
+                artistName = Arrays.stream(message.getContent().split(" "))
+                        .collect(Collectors.toList())
+                        .stream()
+                        .skip(1)
+                        .collect(Collectors.joining("+"));
+            }
+        }
+
+        if (artistName.equals("")) {
+            artistName = Service.getUserCurrentTrackArtistName(objectMapper, httpClient, message);
+        }
+
+
+        MongoClient mongoClient = MongoClients.create(connectionString);
+        MongoDatabase database = mongoClient.getDatabase("spongeybot");
+        MongoCollection<Document> scrobbles = database.getCollection(username);
+
+        String spotifyAccessToken = SpotifyService.getAccessToken(SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET);
+        String artistSpotifyId = SpotifyService.getArtistSpotifyId(spotifyAccessToken, artistName);
+
+
+        String oldname = artistName.replace("+", " ");
+        EmbedCreateSpec.Builder embedBuilder = Service.createEmbed(oldname + "'s tracks " + username + " has not listened to yet ");
+        embedBuilder.footer("Tracks not including songs artist has featured on/appears on", "https://i.imgur.com/F9BhEoz.png");
+
+        Set<String> allArtistsTracks = SpotifyService.getArtistsTracksAll(spotifyAccessToken, artistSpotifyId);
+       /*List<String> tracksNotListenedTo = new ArrayList<>();
+        String newArtistname = artistName.replace("+", " ");
+        for (String track : allArtistsTracks) {
+
+            Pattern regexPattern = Pattern.compile("^" + Pattern.quote(track) + "$", Pattern.CASE_INSENSITIVE);
+            Bson filter = Filters.and(
+                    Filters.regex("artist", newArtistname, "i"),
+                    Filters.regex("track", regexPattern)
+            );
+            if (scrobbles.find(filter).first() == null) {
+                tracksNotListenedTo.add(track);
+            }
+        }
+        */
+        List<String> tracksNotListenedTo = Service.getListOfTracksNotListenedTo(artistName, allArtistsTracks, scrobbles);
+
+        System.out.println("THese are tracks u haevnt listned to: " + tracksNotListenedTo);
+
+
+        embedBuilder.addField("Total artist tracks: ", String.valueOf(allArtistsTracks.size()), false);
+        embedBuilder.addField("Tracks you haven't listened to: ", String.valueOf(tracksNotListenedTo.size()), false);
+        embedBuilder.addField("Tracks you have listened to: ", String.valueOf(allArtistsTracks.size() - tracksNotListenedTo.size()), false);
+
+        return message.getChannel().flatMap(channel -> channel.createMessage(embedBuilder.build()));
+
+    }
+    static Mono<?> wkCommand(Message message, ObjectMapper objectMapper, CloseableHttpClient httpClient, GatewayDiscordClient client) throws Exception {
         String artistName = Arrays.stream(message.getContent().split(" "))
                 .collect(Collectors.toList())
                 .stream()
@@ -92,10 +176,29 @@ public class ArtistCommands {
         System.out.println("this is artist name:" + artistName);
         System.out.println("this is filter:" + filter);
 
+        //if spotify image dont work use this
+
+        /*String searchingArtistName = artistName.replace(" ", "+");
+        String artistInfoUrl = BASE_URL + "?method=artist.getinfo&artist=" + searchingArtistName + "&api_key=" + API_KEY + "&format=json";
+        JsonNode rootNode =  Service.getJsonNodeFromUrl(objectMapper, artistInfoUrl, httpClient);
+        String artistMBID = rootNode.path("artist").path("mbid").asText();
+        System.out.println("Artists mbid: " + artistMBID);*/
+
+
+        String spotifyAccessToken = SpotifyService.getAccessToken(SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET);
+
+        System.out.println("This is aceess token: " + spotifyAccessToken);
+        String artistSpotifyId = SpotifyService.getArtistSpotifyId(spotifyAccessToken, artistName);
+        System.out.println("THIS IS SPOTIFY ARTIST ID: " + artistSpotifyId);
+
+        String artistImageUrl = SpotifyService.getArtistImageURL(artistSpotifyId, spotifyAccessToken);
+        System.out.println("This is spotify artist image url: " + artistImageUrl);
+
 
         EmbedCreateSpec.Builder embedBuilder = Service.createEmbed("Who knows " + artistName.replace("+", " ")
                 + "?");
 
+        embedBuilder.thumbnail(artistImageUrl);
 
 
 
@@ -132,11 +235,11 @@ public class ArtistCommands {
                 Map.Entry<String, Integer> entry = iterator.next();
                 String lastFmUserURL = "https://www.last.fm/user/" + "spongeystar16";
                 if (!iterator.hasNext()) {
-                    wkString.append("\uD83D\uDDD1  ").append("**" + "[" + entry.getKey() + "](" + lastFmUserURL + ")").append(" - ").append(entry.getValue()).append("** plays \n");
+                    wkString.append("\uD83D\uDDD1  ").append("**" + "[").append(entry.getKey()).append("](").append(lastFmUserURL).append(")").append(" - ").append(entry.getValue()).append("** plays \n");
                 } else if (count == 1) {
-                    wkString.append("\uD83D\uDC51  ").append("**" + "[" + entry.getKey() + "](" + lastFmUserURL + ")").append(" - ").append(entry.getValue()).append("** plays \n");
+                    wkString.append("\uD83D\uDC51  ").append("**" + "[").append(entry.getKey()).append("](").append(lastFmUserURL).append(")").append(" - ").append(entry.getValue()).append("** plays \n");
                 } else {
-                    wkString.append(count).append(".   ").append("**  " + "[" + entry.getKey() + "](" + lastFmUserURL + ")").append(" - ").append(entry.getValue()).append("** plays \n");
+                    wkString.append(count).append(".   ").append("**  " + "[").append(entry.getKey()).append("](").append(lastFmUserURL).append(")").append(" - ").append(entry.getValue()).append("** plays \n");
                 }
 
                 count++;
@@ -165,7 +268,7 @@ public class ArtistCommands {
     static Mono<?> getArtistTracks(Message message, GatewayDiscordClient client) throws JsonProcessingException {
         String[] command = message.getContent().split(" ");
 
-        String artist = "";
+        String artist;
         if (command.length >= 2) {
             if (!message.getUserMentions().isEmpty()) {
                 artist = Arrays.stream(command)
@@ -209,21 +312,22 @@ public class ArtistCommands {
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
         MongoCollection<Document> collection = database.getCollection(username);
         EmbedCreateSpec.Builder embedBuilder = Service.createEmbed(username  + "'s tracks for " + artist);
-        Bson filter = Filters.regex("artist", artist, "i");
-
+        Bson filter = Filters.eq("artist", artist);
+//todo put back case sensitiveif required czuz it counted sum youtube vid
 
         Map<String, Integer> artistTracks = new HashMap<>();
 
 
         for (Document doc : collection.find(filter)) {
             int currentCount = artistTracks.getOrDefault(doc.getString("track"), 0);
+          //  System.out.println("THIS IS DOC: " + doc);
             artistTracks.put(doc.getString("track"), currentCount + 1);
         }
 
 
 
         List<Map.Entry<String, Integer>> entryListArtistTracks = new ArrayList<>(artistTracks.entrySet());
-        Collections.sort(entryListArtistTracks, Map.Entry.<String, Integer>comparingByValue().reversed());
+        entryListArtistTracks.sort(Map.Entry.<String, Integer>comparingByValue().reversed());
 
         int count = 1;
         StringBuilder artistTracksAll = new StringBuilder();
@@ -239,6 +343,11 @@ public class ArtistCommands {
         }
 
         embedBuilder.addField("ur artist tracks", artistTracksAll.toString(), false);
+        System.out.println("These are artists tracks size: " + artistTracks );
+
+
+        System.out.println("These are artists tracks size2: " + artistTracks.size() );
+
 
         return message.getChannel().flatMap(channel -> channel.createMessage(embedBuilder.build()));
 
@@ -250,7 +359,7 @@ public class ArtistCommands {
 
         String artist = "";
         if (command.length >= 2) {
-            System.out.println(command);
+            System.out.println(Arrays.toString(command));
 
             if (!message.getUserMentions().isEmpty()) {
                 artist = Arrays.stream(command)
@@ -320,24 +429,56 @@ public class ArtistCommands {
 
 
 
-    static Mono<?> artistInfoCommand(Message message, ObjectMapper objectMapper, CloseableHttpClient httpClient, GatewayDiscordClient client) {
-        String artistName = Arrays.stream(message.getContent().split(" "))
-                .collect(Collectors.toList())
-                .stream()
-                .skip(1)
-                .collect(Collectors.joining("+"));
+
+    static Mono<?> artistInfoCommand(Message message, ObjectMapper objectMapper, CloseableHttpClient httpClient, GatewayDiscordClient client) throws Exception {
+        String[] command = message.getContent().split(" ");
+
+
+        String artistName = "";
+        long userid = message.getAuthor().get().getId().asLong();
+
+        String username = client.getUserById(Snowflake.of(userid))
+                .block()
+                .getUsername();
+
+        if (!message.getUserMentions().isEmpty()) {
+            username = message.getUserMentions().get(0).getUsername();
+            userid = message.getUserMentions().get(0).getId().asLong();
+        }
+
+
+        if (command.length >= 2) {
+            if (!message.getUserMentions().isEmpty()) {
+                artistName = Arrays.stream(command)
+                        .collect(Collectors.toList())
+                        .subList(0, command.length - 1)
+                        .stream()
+                        .skip(1)
+                        .collect(Collectors.joining("+"));
+
+            } else {
+                artistName = Arrays.stream(message.getContent().split(" "))
+                        .collect(Collectors.toList())
+                        .stream()
+                        .skip(1)
+                        .collect(Collectors.joining("+"));
+            }
+
+        }
+
+
 
         if (artistName.equals("")) {
             artistName = Service.getUserCurrentTrackArtistName(objectMapper, httpClient, message);
         }
 
-        String artistSummary = "";
-        System.out.println("artist name: 0" + artistName);
+        String artistSummary;
+        System.out.println("artist name: " + artistName);
 
         String artistInfoUrl = BASE_URL + "?method=artist.getinfo&artist=" + artistName + "&api_key=" + API_KEY + "&format=json";
         System.out.println("this is artist info url: " + artistInfoUrl);
         HttpGet requestArtistInfo = new HttpGet(artistInfoUrl);
-        HttpResponse responseArtistInfo = null;
+        HttpResponse responseArtistInfo;
         try {
             responseArtistInfo = httpClient.execute(requestArtistInfo);
         } catch (IOException e) {
@@ -354,26 +495,51 @@ public class ArtistCommands {
         }
 
 
+        artistName = artistName.replace("+", " ");
+
+        int authorsArtistPlays = Service.getArtistPlays(userid, artistName, client);
+
+        String spotifyAccessToken = SpotifyService.getAccessToken(SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET);
+        String artistSpotifyId = SpotifyService.getArtistSpotifyId(spotifyAccessToken, artistName);
+
+
+        String artistImageUrl = SpotifyService.getArtistImageURL(artistSpotifyId, spotifyAccessToken);
+
+        MongoClient mongoClient = MongoClients.create(connectionString);
+        MongoDatabase database = mongoClient.getDatabase("spongeybot");
+        MongoCollection<Document> scrobbles = database.getCollection(username);
+
+
+        Set<String> allArtistsTracks = SpotifyService.getArtistsTracksAll(spotifyAccessToken, artistSpotifyId);
+        List<String> tracksNotListenedTo = Service.getListOfTracksNotListenedTo(artistName, allArtistsTracks, scrobbles);
+
+        int numArtistTracks = allArtistsTracks.size();
+
         EmbedCreateSpec.Builder embedBuilder = Service.createEmbed((artistName.replace("+", " ")));
 
-        embedBuilder.addField("Summary: ", artistSummary, false);
+        embedBuilder.thumbnail(artistImageUrl);
+
+        embedBuilder.addField("Summary: ", artistSummary, true);
+        embedBuilder.addField(username + "'s total plays: ", authorsArtistPlays + " plays", false);
+        embedBuilder.addField("First time listened: ", Service.getFirstTimeListeningToArtist(artistName, username), false);
+        embedBuilder.addField("Tracks played: ", "You have listened to " + (allArtistsTracks.size() - tracksNotListenedTo.size()) + " out of " + numArtistTracks + " of " + artistName + "'s tracks", false);
+        embedBuilder.footer("Tracks not including songs artist has featured on/appears on", "https://i.imgur.com/F9BhEoz.png");
+
+
+
         return message.getChannel().flatMap(channel -> channel.createMessage(embedBuilder.build()));
     }
 
 
-    static Mono<?> topArtistsCommand(Message message, ObjectMapper objectMapper, CloseableHttpClient httpClient, GatewayDiscordClient client) {
+    static Mono<?> topArtistsCommand(Message message, ObjectMapper objectMapper, CloseableHttpClient httpClient) {
         //week, month
         String[] command = message.getContent().split(" ");
 
-        String timePeriod = ""; //overall if blank
+        String timePeriod; //overall if blank
         if (command.length >= 2) {
             timePeriod = command[1];
             System.out.println("timePeriod: " + timePeriod);
         }
-
-
-        MongoClient mongoClient = MongoClients.create(connectionString);
-        MongoDatabase database = mongoClient.getDatabase("spongeybot");
 
 
         String userSessionKey = Service.getUserSessionKey(message);

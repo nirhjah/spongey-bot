@@ -1,4 +1,3 @@
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mongodb.client.*;
@@ -16,21 +15,16 @@ import org.bson.conversions.Bson;
 
 import java.io.IOException;
 import java.time.*;
+import java.time.format.DateTimeFormatter;
 import java.time.temporal.TemporalAdjusters;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
+import java.util.regex.Pattern;
 
 public class Service {
 
     static String connectionString = System.getenv("CONNECTION_STRING");
     private static final String BASE_URL = "http://ws.audioscrobbler.com/2.0/";
     private static final String API_KEY = System.getenv().get("API_KEY");
-
-    static void handleException(String errorMessage, Message message) {
-        message.getChannel().flatMap(channel -> channel.createMessage(errorMessage)).block();
-    }
 
     static EmbedCreateSpec.Builder createEmbed(String name) {
 
@@ -201,6 +195,46 @@ public class Service {
 
     }
 
+    static List<String> getListOfTracksNotListenedTo(String artistName, Set<String> allArtistsTracks, MongoCollection<Document> scrobbles) {
+        List<String> tracksNotListenedTo = new ArrayList<>();
+        String newArtistname = artistName.replace("+", " ");
+        for (String track : allArtistsTracks) {
+
+            Pattern regexPattern = Pattern.compile("^" + Pattern.quote(track) + "$", Pattern.CASE_INSENSITIVE);
+            Bson filter = Filters.and(
+                    Filters.regex("artist", newArtistname, "i"),
+                    Filters.regex("track", regexPattern)
+            );
+            if (scrobbles.find(filter).first() == null) {
+                tracksNotListenedTo.add(track);
+            }
+        }
+        return tracksNotListenedTo;
+    }
+
+    static String getFirstTimeListeningToArtist(String artist, String username) {
+        MongoClient mongoClient = MongoClients.create(connectionString);
+        MongoDatabase database = mongoClient.getDatabase("spongeybot");
+        MongoCollection<Document> collection = database.getCollection(username);
+        int minTimestamp = (int) (System.currentTimeMillis() / 1000);
+        //String artistReal = collection.find(filter).first().getString("artist");
+        Bson newFilter = Filters.eq("artist", artist);
+
+        for (Document doc : collection.find(newFilter)) {
+
+            int timestamp = doc.getInteger("timestamp");
+            // For min timestamp
+            if (timestamp < minTimestamp) {
+                minTimestamp = timestamp;
+            }
+
+        }
+
+        Instant instant = Instant.ofEpochSecond(minTimestamp);
+        LocalDateTime dateTime = LocalDateTime.ofInstant(instant, ZoneId.systemDefault());
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd MMMM yyyy");
+        return dateTime.format(formatter);
+    }
 
     static String getUserCurrentTrackArtistName(ObjectMapper objectMapper, CloseableHttpClient httpClient, Message message) {
 
@@ -226,10 +260,9 @@ public class Service {
 
 
 
-    static int getTotalScrobblesForYear(int year, String username, long userid) throws JsonProcessingException {
+    static int getTotalScrobblesForYear(int year, String username, long userid) {
 
         int scrobbleCounterForYear = 0;
-        int currentTimeUTS = (int) (System.currentTimeMillis() / 1000);
 
         MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
@@ -243,10 +276,8 @@ public class Service {
         LocalDateTime givenStartDateTime = LocalDateTime.of(year, Month.JANUARY, 1, 0, 0);
         LocalDateTime givenEndDateTime = LocalDateTime.of(year, Month.DECEMBER, 31, 23, 59);
 
-            startOfGivenYearUTS = Service.convertToUnixTimestamp(givenStartDateTime);
-            endOfGivenYearUTS = Service.convertToUnixTimestamp(givenEndDateTime);
-
-
+        startOfGivenYearUTS = Service.convertToUnixTimestamp(givenStartDateTime);
+        endOfGivenYearUTS = Service.convertToUnixTimestamp(givenEndDateTime);
 
         for (Document doc : collection.find(filter)) {
             int timestamp = doc.getInteger("timestamp");
@@ -262,10 +293,7 @@ public class Service {
 
 
 
-    static int getTotalArtistsForYear(int year, String username, long userid) throws JsonProcessingException {
-
-        int artistCounterForYear = 0;
-        int currentTimeUTS = (int) (System.currentTimeMillis() / 1000);
+    static int getTotalArtistsForYear(int year, String username, long userid) {
 
         MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
@@ -301,9 +329,7 @@ public class Service {
 
 
 
-    static int getTotalTracksForYear(int year, String username, long userid) throws JsonProcessingException {
-
-        int currentTimeUTS = (int) (System.currentTimeMillis() / 1000);
+    static int getTotalTracksForYear(int year, String username, long userid) {
 
         MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");

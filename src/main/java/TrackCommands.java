@@ -101,10 +101,6 @@ public class TrackCommands {
                 trackName = firstTrackNode.path("name").asText();
                 artist = firstTrackNode.path("artist").asText();
 
-              /*  filter = Filters.and(
-                        Filters.eq("track", trackName.replace("+", " ")),
-                        Filters.eq("artist", artist.replace("+", " "))
-                );*/
 
                 filter = Filters.and(
                         Filters.regex("track", "^" + Pattern.quote(trackName.replace("+", " ")), "i"),
@@ -157,7 +153,7 @@ public class TrackCommands {
 
 
         List<Map.Entry<String, Integer>> sortedWkt = new LinkedList<>(unsortedWk.entrySet());
-        Collections.sort(sortedWkt, Map.Entry.<String, Integer>comparingByValue().reversed());
+        sortedWkt.sort(Map.Entry.<String, Integer>comparingByValue().reversed());
 
 
 
@@ -166,7 +162,7 @@ public class TrackCommands {
         for (Map.Entry<String, Integer> entry : sortedWkt) {
             String lastFmUserURL = "https://www.last.fm/user/" + "spongeystar16";
 
-            wktString.append(count).append(". ").append("**" + "[" + entry.getKey() + "](" + lastFmUserURL + ")").append(" - ").append(entry.getValue()).append("** plays \n");
+            wktString.append(count).append(". ").append("**" + "[").append(entry.getKey()).append("](").append(lastFmUserURL).append(")").append(" - ").append(entry.getValue()).append("** plays \n");
             count++;
 
         }
@@ -221,7 +217,7 @@ public class TrackCommands {
         }
 
         List<Map.Entry<List<String>, Integer>> mostListenedList = new ArrayList<>(mostListenedToInOneDay.entrySet());
-        Collections.sort(mostListenedList, Map.Entry.<List<String>, Integer>comparingByValue().reversed());
+        mostListenedList.sort(Map.Entry.<List<String>, Integer>comparingByValue().reversed());
 
 
         String finalUsername = username;
@@ -231,21 +227,16 @@ public class TrackCommands {
     }
 
 
-    static Mono<?> topTracksCommand(Message message, ObjectMapper objectMapper, CloseableHttpClient httpClient, GatewayDiscordClient client) {
+    static Mono<?> topTracksCommand(Message message, ObjectMapper objectMapper, CloseableHttpClient httpClient) {
 
-        MongoClient mongoClient = MongoClients.create(connectionString);
 
         String userSessionKey = Service.getUserSessionKey(message);
 
         if (userSessionKey == null) {
             return message.getChannel().flatMap(channel -> channel.createMessage("please login to use this command"));
-
         }
 
-
         String url = BASE_URL + "?method=user.gettoptracks&api_key=" + API_KEY + "&sk=" + userSessionKey + "&limit=5" + "&format=json";
-
-        System.out.println("top tracks url: " + url);
 
         return message.getChannel()
 
@@ -288,7 +279,7 @@ public class TrackCommands {
     static Mono<?> getTrackInfo(Message message, GatewayDiscordClient client) throws JsonProcessingException {
         String[] command = message.getContent().split(" ");
 
-        String track = "";
+        String track;
         if (command.length >= 2) {
        /*     track = Arrays.stream(message.getContent().split(" "))
                     .collect(Collectors.toList())
@@ -297,6 +288,9 @@ public class TrackCommands {
                     .collect(Collectors.joining(" "));
 */
             if (!message.getUserMentions().isEmpty()) {
+
+
+
                 track = Arrays.stream(command)
                         .collect(Collectors.toList())
                         .subList(0, command.length - 1)
@@ -328,11 +322,9 @@ public class TrackCommands {
                 .getUsername();
 
 
-        long userid = message.getAuthor().get().getId().asLong();
 
         if (!message.getUserMentions().isEmpty()) {
             username = message.getUserMentions().get(0).getUsername();
-            userid = message.getUserMentions().get(0).getId().asLong();
         }
 
 
@@ -358,12 +350,17 @@ public class TrackCommands {
                 Filters.regex("artist", artist, "i")
         );
 
+      String albumLink = collection.find(filter).first().getString("albumLink");
+
         for (Document doc : collection.find(newFilter)) {
+
+
             totalScrobbles += 1;
             int duration = doc.getInteger("duration");
             track = doc.getString("track");
 
             int timestamp = doc.getInteger("timestamp");
+
             totalDuration += duration;
             Instant instant = Instant.ofEpochSecond(timestamp);
             LocalDateTime dateTime = LocalDateTime.ofInstant(instant, ZoneId.systemDefault());
@@ -411,6 +408,8 @@ public class TrackCommands {
 
         EmbedCreateSpec.Builder embedBuilder = Service.createEmbed("track info for " + track);
 
+        embedBuilder.thumbnail(albumLink);
+
         embedBuilder.addField("total scrobbles: ", String.valueOf(totalScrobbles), false);
 
         embedBuilder.addField("first time listened to: ", firstDate, false);
@@ -439,7 +438,6 @@ public class TrackCommands {
 
         if (!message.getUserMentions().isEmpty()) {
             username = message.getUserMentions().get(0).getUsername();
-            userid = message.getUserMentions().get(0).getId().asLong();
         }
 
         EmbedCreateSpec.Builder embedBuilder = Service.createEmbed("Your top 5 longest tracks");
@@ -454,7 +452,6 @@ public class TrackCommands {
         List<Document> topSongsList = new ArrayList<>();
 
         for (Document scrobble : scrobbles.find()) {
-            // Create a unique key for the song based on track and artist
             String songKey = scrobble.getString("track") + "_" + scrobble.getString("artist");
 
             if (!uniqueSongsSet.contains(songKey)) {

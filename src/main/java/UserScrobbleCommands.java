@@ -23,6 +23,9 @@ import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 
+import static java.lang.Math.max;
+import static java.lang.Math.min;
+
 public class UserScrobbleCommands {
 
 
@@ -56,6 +59,7 @@ public class UserScrobbleCommands {
 
         int count = 1;
         Map<String, Integer> artistsForYear = new HashMap<>();
+
         Map<List<String>, Integer> tracksForYearNew = new HashMap<>();
         Map<List<String>, Integer> albumsForYearNew = new HashMap<>();
         if (Objects.equals(type, "artist")) {
@@ -361,9 +365,9 @@ public class UserScrobbleCommands {
 
 
         if (currentPage == 1) {
-            embedBuilder.addField("Total scrobbles", totalScrobblesForYear + " (" + getSign(totalScrobblesForYear, totalScrobblesForPrevYear) + " " + (totalScrobblesForYear - totalArtistsForPrevYear) + " from " + (Integer.parseInt(year)-1) + ") " , false);
-            embedBuilder.addField("Total Artists", totalArtistsForYear + " (" + getSign(totalArtistsForYear, totalArtistsForPrevYear) + " " + (totalArtistsForYear - totalArtistsForPrevYear) + " from " + (Integer.parseInt(year)-1) + ") " , false);
-            embedBuilder.addField("Total Tracks", totalTracksForYear + " (" + getSign(totalTracksForYear, totalTracksForPrevYear) + " " + (totalTracksForYear - totalTracksForPrevYear) + " from " + (Integer.parseInt(year)-1) + ") " , false);
+            embedBuilder.addField("Total scrobbles", totalScrobblesForYear + " " + getSign(totalScrobblesForYear, totalScrobblesForPrevYear, String.valueOf(prevYear)), false);
+            embedBuilder.addField("Total Artists", totalArtistsForYear + " " + getSign(totalArtistsForYear, totalArtistsForPrevYear, String.valueOf(prevYear)), false);
+            embedBuilder.addField("Total Tracks", totalTracksForYear + " " + getSign(totalTracksForYear, totalTracksForPrevYear, String.valueOf(prevYear)), false);
 
         }
 
@@ -386,12 +390,32 @@ public class UserScrobbleCommands {
         return message.getChannel().flatMap(channel -> channel.createMessage(messageCreateSpec));
     }
 
-
-    private static String getSign(int totalThisYear, int totalPrevYear) {
-        int difference = totalThisYear - totalPrevYear;
+      /* int difference = totalThisYear - totalPrevYear;
         String sign;
-        if (difference >= 0) { sign = "up "; }
-        else { sign = "down "; }
+        if (difference >= 0) {
+            sign = "up ";
+        }
+        else {
+            sign = "down "; }
+        return sign;*/
+
+    private static String getSign(int totalThisYear, int totalPrevYear, String prevYear) {
+
+
+        int bigYear = max(totalThisYear, totalPrevYear);
+        int smallYear = min(totalPrevYear, totalThisYear);
+        int difference = bigYear - smallYear;
+        String sign = "";
+
+        if (totalThisYear > totalPrevYear) {
+            totalThisYear = bigYear;
+            totalPrevYear = smallYear;
+            sign = difference + " more than " + prevYear;
+        } else if (totalThisYear < totalPrevYear) {
+            totalThisYear = smallYear;
+            totalPrevYear = bigYear;
+            sign = difference + " less than " + prevYear;
+        }
         return sign;
     }
 
@@ -443,9 +467,9 @@ public class UserScrobbleCommands {
 
 
         if (currentPage == 1) {
-            embedBuilder.addField("Total scrobbles", totalScrobblesForYear + " (" + getSign(totalScrobblesForYear, totalScrobblesForPrevYear) + " " + (totalScrobblesForYear - totalScrobblesForPrevYear) + " from " + (Integer.parseInt(year)-1) + ") " , false);
-            embedBuilder.addField("Total Artists", totalArtistsForYear + " (" + getSign(totalArtistsForYear, totalArtistsForPrevYear) + " " + (totalArtistsForYear - totalArtistsForPrevYear) + " from " + (Integer.parseInt(year)-1) + ") " , false);
-            embedBuilder.addField("Total Tracks", totalTracksForYear + " (" + getSign(totalTracksForYear, totalTracksForPrevYear) + " " + (totalTracksForYear - totalTracksForPrevYear) + " from " + (Integer.parseInt(year)-1) + ") " , false);
+            embedBuilder.addField("Total scrobbles", totalScrobblesForYear + " " + getSign(totalScrobblesForYear, totalScrobblesForPrevYear, String.valueOf(prevYear)), false);
+            embedBuilder.addField("Total Artists", totalArtistsForYear + " " + getSign(totalArtistsForYear, totalArtistsForPrevYear, String.valueOf(prevYear)), false);
+            embedBuilder.addField("Total Tracks", totalTracksForYear + " " + getSign(totalTracksForYear, totalTracksForPrevYear, String.valueOf(prevYear)), false);
 
         }
         if (currentPage == 2) {
