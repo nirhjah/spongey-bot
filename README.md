@@ -1,9 +1,8 @@
 # spongey-bot
 a discord bot that provides music listening stats provided by the last.fm website
 
+
 ## Features
-
-
 #### See who knows an artist...
 ![image](https://github.com/nirhjah/spongey-bot/assets/34588618/b7cf1773-d3d6-4864-895b-4821ed1d8949)
 
@@ -25,3 +24,4 @@ a discord bot that provides music listening stats provided by the last.fm websit
 - scrobbles per time period
 - song you listened to the most in one day
 - and more...
+
