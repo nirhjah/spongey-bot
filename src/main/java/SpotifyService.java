@@ -49,7 +49,7 @@ public class SpotifyService {
 
                         for (JsonNode track : albumsTracks) {
                             JsonNode artists = track.get("artists");
-                            if (artists.size() == 1) {
+                            if ((artists.size() == 1) && Objects.equals(artists.get(0).get("id").asText(), artistId)){
                                 //Song only by the artist
                                 allArtistsTracks.add(track.get("name").asText());
 
