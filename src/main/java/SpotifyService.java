@@ -53,10 +53,12 @@ public class SpotifyService {
                                 //Song only by the artist
                                 allArtistsTracks.add(track.get("name").asText());
 
+
                             } else {
                                 if (Objects.equals(artists.get(0).get("id").asText(), artistId)) {
                                     //Song with multiple artists but the main artist is our artist - we aren't counting features
                                     allArtistsTracks.add(track.get("name").asText());
+
                                 }
                             }
                         }

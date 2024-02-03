@@ -485,7 +485,7 @@ public class UserScrobbleCommands {
         message.edit().withEmbeds(embedBuilder.build()).subscribe();
     }
 
-    public static Mono<Void> handleButtonInteraction(ButtonInteractionEvent event) throws JsonProcessingException {
+    public static Mono<Void> handleButtonInteraction(ButtonInteractionEvent event) throws Exception {
         String customId = event.getCustomId();
         Message message = event.getMessage().orElse(null);
 
@@ -493,6 +493,13 @@ public class UserScrobbleCommands {
             handleButtonClick(message, message.getEmbeds().get(0), true);
         } else if ("prev".equals(customId)) {
             handleButtonClick(message, message.getEmbeds().get(0), false);
+        } else if ("nextTracks".equals(customId)) {
+            System.out.println("Clicked next tracks");
+            ArtistCommands.handleTracksNotListenedButtonClick(message, message.getEmbeds().get(0), true);
+        } else if ("prevTracks".equals(customId)) {
+            System.out.println("Clicked prev tracks");
+            ArtistCommands.handleTracksNotListenedButtonClick(message, message.getEmbeds().get(0), false);
+
         }
 
         return Mono.empty();
@@ -512,7 +519,6 @@ public class UserScrobbleCommands {
 
         }
 
-        int scrobbleCounterForYear = 0;
         int currentTimeUTS = (int) (System.currentTimeMillis() / 1000);
 
         String username = client.getUserById(Snowflake.of(message.getAuthor().get().getId().asLong()))
@@ -523,8 +529,6 @@ public class UserScrobbleCommands {
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
         MongoCollection<Document> collection = database.getCollection(username);
 
-        //gets all docs in scrobbles collection for a user
-        Bson filter = Filters.all("userId", message.getAuthor().get().getId().asLong());
 
         long startOfGivenYearUTS;
         long endOfGivenYearUTS;
@@ -533,27 +537,24 @@ public class UserScrobbleCommands {
         LocalDateTime givenEndDateTime = LocalDateTime.of(Integer.parseInt(year), Month.DECEMBER, 31, 23, 59);
 
         if (year.equals("")) {
-
             startOfGivenYearUTS = 1672570800;
             endOfGivenYearUTS = currentTimeUTS;
         } else {
-
             startOfGivenYearUTS = Service.convertToUnixTimestamp(givenStartDateTime);
             endOfGivenYearUTS = Service.convertToUnixTimestamp(givenEndDateTime);
-
         }
 
-        for (Document doc : collection.find(filter)) {
-            int timestamp = doc.getInteger("timestamp");
+        Bson timeFilter = Filters.and(
+                Filters.gte("timestamp", startOfGivenYearUTS),
+                Filters.lt("timestamp", endOfGivenYearUTS)
+                );
 
-            if (timestamp  < endOfGivenYearUTS && timestamp >= startOfGivenYearUTS) {
-                scrobbleCounterForYear += 1;
-            }
-        }
+        int scrobbleCounterForYear = (int) collection.countDocuments(timeFilter);
 
-        String finalYear = year;
-        int finalScrobbleCounterForWeek = scrobbleCounterForYear;
-        return message.getChannel().flatMap(channel -> channel.createMessage("Your total scrobbles for " + finalYear + ": " + finalScrobbleCounterForWeek));
+        EmbedCreateSpec.Builder embedBuilder = Service.createEmbed(username + "'s scrobbles for " + year);
+        embedBuilder.addField("", "You have " + scrobbleCounterForYear + " scrobbles!", false);
+
+        return message.getChannel().flatMap(channel -> channel.createMessage(embedBuilder.build()));
 
 
     }
@@ -631,7 +632,7 @@ public class UserScrobbleCommands {
     }
 
 
-    static Mono<?> getDailyListeningTime(Message message, GatewayDiscordClient client) throws JsonProcessingException, UnsupportedEncodingException {
+    static Mono<?> getListeningTime(Message message, GatewayDiscordClient client) throws JsonProcessingException, UnsupportedEncodingException {
 
 
         String[] command = message.getContent().split(" ");
@@ -690,9 +691,6 @@ public class UserScrobbleCommands {
         }
 
 
-        System.out.println("This is first minute: " + firstMinuteOfPeriod);
-        System.out.println("This is last minute: " +  lastMinuteOfPeriod);
-
         long utsStartOfPeriod = firstMinuteOfPeriod.toInstant().getEpochSecond();
 
         long utsEndOfPeriod = lastMinuteOfPeriod.toInstant().getEpochSecond();
@@ -705,10 +703,13 @@ public class UserScrobbleCommands {
 
         listeningTime = Service.calculateListeningTime(scrobblesCollection, filter)/60;
 
-        int finalListeningTime = listeningTime;
-        String finalTimePeriod = timePeriod;
 
-        return message.getChannel().flatMap(channel -> channel.createMessage("You listened to " + finalListeningTime + " minutes! (" + finalTimePeriod + ")"));
+
+        EmbedCreateSpec.Builder embedBuilder = Service.createEmbed(username + "'s listening time for " + timePeriod);
+        embedBuilder.addField("", "You listened to " + listeningTime + " minutes!", false);
+
+
+        return message.getChannel().flatMap(channel -> channel.createMessage(embedBuilder.build()));
     }
 
 

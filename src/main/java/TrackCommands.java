@@ -229,6 +229,32 @@ public class TrackCommands {
 
     static Mono<?> topTracksCommand(Message message, ObjectMapper objectMapper, CloseableHttpClient httpClient) {
 
+        String[] command = message.getContent().split(" ");
+
+        String timePeriod = "";
+        if (command.length >= 2) {
+            timePeriod = command[1];
+        }
+
+        String periodForAPI = "";
+
+        if (Objects.equals(timePeriod, "lifetime")) {
+            periodForAPI = "overall";
+        } else if (Objects.equals(timePeriod, "week")) {
+            periodForAPI = "7day";
+        } else if (Objects.equals(timePeriod, "month")) {
+            periodForAPI = "1month";
+        } else if (Objects.equals(timePeriod, "quarter")) {
+            periodForAPI = "3month";
+        } else if (Objects.equals(timePeriod, "halfyear")) {
+            periodForAPI = "6month";
+        } else if (Objects.equals(timePeriod, "year")) {
+            periodForAPI = "12month";
+        } else {
+            return message.getChannel().flatMap(channel -> channel.createMessage("Invalid time period provided: week, month, quarter, halfyear, year, lifetime"));
+
+        }
+        System.out.println("Period: " + periodForAPI);
 
         String userSessionKey = Service.getUserSessionKey(message);
 
@@ -236,43 +262,24 @@ public class TrackCommands {
             return message.getChannel().flatMap(channel -> channel.createMessage("please login to use this command"));
         }
 
-        String url = BASE_URL + "?method=user.gettoptracks&api_key=" + API_KEY + "&sk=" + userSessionKey + "&limit=5" + "&format=json";
+        String url = BASE_URL + "?method=user.gettoptracks&api_key=" + API_KEY + "&sk=" + userSessionKey + "&limit=10&period=" + periodForAPI + "&format=json";
 
-        return message.getChannel()
+        JsonNode rootNode =  Service.getJsonNodeFromUrl(objectMapper, url, httpClient);
+        JsonNode topTracksNode = rootNode.path("toptracks");
 
-                .flatMap(userResponse -> {
+        EmbedCreateSpec.Builder embedBuilder = Service.createEmbed("Your top tracks for " + timePeriod);
 
+        int count = 1;
+        for (JsonNode trackNode : topTracksNode.path("track")) {
+            String name = trackNode.path("name").asText();
+            String playcount = trackNode.path("playcount").asText();
+            String trackUrl = trackNode.path("url").asText();
+            String hyperlinkText = "**[" + name + "](" + trackUrl + ")**";
+            embedBuilder.addField("", "**" + count + "**. " + hyperlinkText + ": " + playcount + " plays", false);
+            count += 1;
+        }
 
-                    try {
-
-                        JsonNode rootNode =  Service.getJsonNodeFromUrl(objectMapper, url, httpClient);
-
-                        EmbedCreateSpec.Builder embedBuilder = Service.createEmbed("Your top tracks");
-
-
-                        JsonNode topTracksNode = rootNode.path("toptracks");
-                        for (JsonNode trackNode : topTracksNode.path("track")) {
-                            String name = trackNode.path("name").asText();
-                            String playcount = trackNode.path("playcount").asText();
-                            String imageUrl = trackNode.path("image")
-                                    .elements()
-                                    .next()
-                                    .path("#text")
-                                    .asText();
-                            embedBuilder.thumbnail(imageUrl);
-
-                            embedBuilder.addField(name, "Plays: " + playcount, false);
-
-                        }
-
-                        return message.getChannel().flatMap(channel -> channel.createMessage(embedBuilder.build()));
-
-                    } catch (Exception e) {
-                        e.printStackTrace();
-                    }
-
-                    return Mono.empty();
-                });
+        return message.getChannel().flatMap(channel -> channel.createMessage(embedBuilder.build()));
     }
 
 

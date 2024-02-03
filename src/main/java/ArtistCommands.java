@@ -8,22 +8,28 @@ import com.mongodb.client.MongoDatabase;
 import com.mongodb.client.model.Filters;
 import discord4j.common.util.Snowflake;
 import discord4j.core.GatewayDiscordClient;
+import discord4j.core.object.Embed;
+import discord4j.core.object.component.ActionRow;
+import discord4j.core.object.component.Button;
 import discord4j.core.object.entity.Message;
+import discord4j.core.spec.EmbedCreateFields;
 import discord4j.core.spec.EmbedCreateSpec;
-import org.apache.http.HttpResponse;
-import org.apache.http.client.methods.HttpGet;
+import discord4j.core.spec.MessageCreateSpec;
+
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.bson.Document;
 import org.bson.conversions.Bson;
 import reactor.core.publisher.Mono;
 
-import java.io.IOException;
 import java.util.*;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 public class ArtistCommands {
 
+    private static Map<List<String>, List<String>> tracksNotListenedToCache = new HashMap<>();
+
+    private static int currentPage = 1;
 
     static String connectionString = System.getenv("CONNECTION_STRING");
 
@@ -86,36 +92,206 @@ public class ArtistCommands {
 
 
         String oldname = artistName.replace("+", " ");
-        EmbedCreateSpec.Builder embedBuilder = Service.createEmbed(oldname + "'s tracks " + username + " has not listened to yet ");
+        EmbedCreateSpec.Builder embedBuilder = Service.createEmbed(oldname + " tracks " + username + " has not listened to yet ");
         embedBuilder.footer("Tracks not including songs artist has featured on/appears on", "https://i.imgur.com/F9BhEoz.png");
 
         Set<String> allArtistsTracks = SpotifyService.getArtistsTracksAll(spotifyAccessToken, artistSpotifyId);
-       /*List<String> tracksNotListenedTo = new ArrayList<>();
-        String newArtistname = artistName.replace("+", " ");
-        for (String track : allArtistsTracks) {
 
-            Pattern regexPattern = Pattern.compile("^" + Pattern.quote(track) + "$", Pattern.CASE_INSENSITIVE);
-            Bson filter = Filters.and(
-                    Filters.regex("artist", newArtistname, "i"),
-                    Filters.regex("track", regexPattern)
-            );
-            if (scrobbles.find(filter).first() == null) {
-                tracksNotListenedTo.add(track);
-            }
+
+        List<String> tracksNotListenedTo;
+
+        List<String> expectedKey = new ArrayList<>();
+        expectedKey.add(username);
+        expectedKey.add(oldname);
+
+        if (tracksNotListenedToCache.containsKey(expectedKey)) {
+            tracksNotListenedTo = tracksNotListenedToCache.get(expectedKey);
+        } else {
+            tracksNotListenedTo = Service.getListOfTracksNotListenedTo(artistName, allArtistsTracks, scrobbles);
+            tracksNotListenedToCache.put(expectedKey, tracksNotListenedTo);
+            System.out.println("Saved in cache with name: " + expectedKey);
         }
-        */
-        List<String> tracksNotListenedTo = Service.getListOfTracksNotListenedTo(artistName, allArtistsTracks, scrobbles);
 
-        System.out.println("THese are tracks u haevnt listned to: " + tracksNotListenedTo);
+        if (currentPage == 1) {
+            int endIndex = Math.min(1 + 10, tracksNotListenedTo.size());
+            List<String> currentTracks = tracksNotListenedTo.subList(1, endIndex);
 
 
-        embedBuilder.addField("Total artist tracks: ", String.valueOf(allArtistsTracks.size()), false);
-        embedBuilder.addField("Tracks you haven't listened to: ", String.valueOf(tracksNotListenedTo.size()), false);
-        embedBuilder.addField("Tracks you have listened to: ", String.valueOf(allArtistsTracks.size() - tracksNotListenedTo.size()), false);
+            StringBuilder fieldToSave = new StringBuilder();
 
-        return message.getChannel().flatMap(channel -> channel.createMessage(embedBuilder.build()));
+
+            int counter = 1;
+            for (String track : currentTracks) {
+                fieldToSave.append(counter).append(". ").append(track).append("\n");
+                counter += 1;
+            }
+
+            embedBuilder.addField("", fieldToSave.toString(), false);
+
+        }
+
+
+
+
+       System.out.println("THese are tracks u haevnt listned to: " + tracksNotListenedTo);
+
+
+        Button nextButton = Button.secondary("nextTracks", "Next Page");
+        Button prevButton = Button.secondary("prevTracks", "Prev Page").disabled();
+
+
+
+        ActionRow actionRow = ActionRow.of(prevButton, nextButton);
+
+
+        MessageCreateSpec messageCreateSpec = MessageCreateSpec.builder()
+                .addEmbed(embedBuilder.build())
+                .addComponent(actionRow)
+                .build();
+
+
+
+        return message.getChannel().flatMap(channel -> channel.createMessage(messageCreateSpec));
+
+
 
     }
+
+
+
+     static void handleTracksNotListenedButtonClick(Message message, Embed oldEmbed, boolean next) throws Exception {
+
+
+
+
+         if (next) {
+            currentPage++;
+        } else {
+            currentPage--;
+        }
+
+
+         EmbedCreateSpec.Builder embedBuilder = EmbedCreateSpec.builder();
+         Embed.Author existingAuthor = oldEmbed.getAuthor().orElse(null);
+         String authorName = existingAuthor != null ? existingAuthor.getName().orElse(null) : null;
+         String authorUrl = existingAuthor != null ? existingAuthor.getUrl().orElse(null) : null;
+         String authorIconUrl = existingAuthor != null ? existingAuthor.getIconUrl().orElse(null) : null;
+
+         System.out.println("THIS IS COMPONENT: " + message.getComponents().get(0));
+         ActionRow editableActionRow = (ActionRow) message.getComponents().get(0);
+         Button editablePrev = (Button) editableActionRow.getChildren().get(0);
+
+         Button editableNext = (Button) editableActionRow.getChildren().get(1);
+
+
+
+
+         String[] words = authorName.split("\\s+");
+
+         //getting artist name from string
+         StringBuilder resultBuilder = new StringBuilder();
+         for (String word : words) {
+             if ("tracks".equalsIgnoreCase(word)) {
+                 break;
+             }
+             resultBuilder.append(word).append(" ");
+         }
+
+         String artistName = resultBuilder.toString();
+         String username = words[words.length - 6];
+
+         System.out.println("THiS IS Artist name: " + artistName);
+         System.out.println("USERNAME: " + username);
+         List<String> tracksNotListenedTo;
+
+         System.out.println("This is cache after clickin button: " + tracksNotListenedToCache);
+        System.out.println();
+
+
+         List<String> expectedKey = new ArrayList<>();
+         expectedKey.add(username);
+         expectedKey.add(artistName.trim());
+
+         if (tracksNotListenedToCache.containsKey(expectedKey)) {
+             System.out.println("We have it in the cache");
+             tracksNotListenedTo = tracksNotListenedToCache.get(expectedKey);
+         } else {
+             System.out.println("Not in the cache for artist: " + artistName.trim());
+             MongoClient mongoClient = MongoClients.create(connectionString);
+             MongoDatabase database = mongoClient.getDatabase("spongeybot");
+
+             MongoCollection<Document> scrobbles = database.getCollection(username);
+             String spotifyAccessToken = SpotifyService.getAccessToken(SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET);
+             String artistSpotifyId = SpotifyService.getArtistSpotifyId(spotifyAccessToken, artistName.trim());
+             Set<String> allArtistsTracks = SpotifyService.getArtistsTracksAll(spotifyAccessToken, artistSpotifyId);
+
+             tracksNotListenedTo = Service.getListOfTracksNotListenedTo(artistName.trim(), allArtistsTracks, scrobbles);
+             tracksNotListenedToCache.put(expectedKey, tracksNotListenedTo);
+         }
+
+
+
+         embedBuilder.color(oldEmbed.getColor().get())
+                 .author(EmbedCreateFields.Author.of(authorName, authorUrl, authorIconUrl));
+
+
+         int startIndex = currentPage * 10;
+         int endIndex = Math.min(startIndex + 10, tracksNotListenedTo.size());
+
+
+
+         System.out.println("This is start index: " + startIndex);
+         System.out.println("This is end index: " + endIndex);
+
+         if (startIndex > endIndex) {
+             System.out.println("index too big");
+             message.edit().withEmbeds(embedBuilder.build()).subscribe();
+
+         }
+         List<String> currentTracks = tracksNotListenedTo.subList(startIndex, endIndex);
+         //need to fix indexes billie eilish was 20 17 here ?? how idk
+         //17 is list  size, 21 is the startindex
+
+
+         StringBuilder fieldToSave = new StringBuilder();
+
+
+         int counter = startIndex;
+         for (String track : currentTracks) {
+             fieldToSave.append(counter).append(". ").append(track).append("\n");
+             counter += 1;
+         }
+
+         System.out.println("This is counter size: " + counter + " and this is list size: " + tracksNotListenedTo.size());
+         if (counter == tracksNotListenedTo.size()) {
+             System.out.println("WE are displaying the last item on the list currently.");
+                editableNext = editableNext.disabled(true);
+                editablePrev = editablePrev.disabled(false);
+         }  if (startIndex == 0) {
+             System.out.println("start index is 0");
+             editablePrev = editablePrev.disabled();
+             editableNext = editableNext.disabled(false);
+         } if (counter < tracksNotListenedTo.size()) {
+             System.out.println("counter smaller than tracksnotlistened size");
+             editableNext = editableNext.disabled(false);
+         }
+
+         else {
+             System.out.println("in the else");
+             editablePrev = editablePrev.disabled(false);
+         }
+
+
+         ActionRow newActionRow = ActionRow.of(editablePrev, editableNext);
+
+         embedBuilder.addField("", fieldToSave.toString(), false);
+
+         message.edit().withEmbeds(embedBuilder.build()).withComponents(newActionRow).subscribe();
+
+
+
+     }
+
     static Mono<?> wkCommand(Message message, ObjectMapper objectMapper, CloseableHttpClient httpClient, GatewayDiscordClient client) throws Exception {
         String artistName = Arrays.stream(message.getContent().split(" "))
                 .collect(Collectors.toList())
@@ -131,10 +307,9 @@ public class ArtistCommands {
         MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
         MongoCollection<Document> users = database.getCollection("users");
-
+        MongoCollection<Document> artists = database.getCollection("artists");
 
         String userSessionKey = Service.getUserSessionKey(message);
-
 
         Bson filter = Filters.regex("artist",  artistName.replace("+", " "), "i");
 
@@ -149,50 +324,50 @@ public class ArtistCommands {
             filter = Filters.regex("artist",  artistName.replace("+", " "), "i");
 
         } else {
-
+            //get most recently listened to artist
             String searchUrl = "https://ws.audioscrobbler.com/2.0/?method=artist.search&artist=" + artistName + "&api_key=" + API_KEY + "&format=json";
-
-
             JsonNode rootNodeForSearch =  Service.getJsonNodeFromUrl(objectMapper, searchUrl, httpClient);
-
             JsonNode artistListForSearch = rootNodeForSearch.path("results").path("artistmatches").path("artist");
 
             if (artistListForSearch.size() > 0) {
                 JsonNode firstTrackNode = artistListForSearch.get(0);
                 artistName = firstTrackNode.path("name").asText();
-
-              /*  filter = Filters.and(
-                        Filters.eq("track", trackName.replace("+", " ")),
-                        Filters.eq("artist", artist.replace("+", " "))
-                );*/
-
                 filter = Filters.regex("artist", "^" + Pattern.quote(artistName.replace("+", " ")), "i");
-
-
             }
+        }
+
+
+
+
+        String artistImageUrl;
+
+        Bson artistFilter = Filters.regex("name", artistName.replace("+", " "), "i");
+        if (artists.find(artistFilter).first() != null) {
+            System.out.println("Artist saved in db already");
+           artistImageUrl = artists.find(artistFilter).first().getString("image");
+        } else {
+            System.out.println("Artist not saved in db");
+            String artistSummary;
+            String artistInfoUrl = BASE_URL + "?method=artist.getinfo&artist=" + artistName.replace(" ", "+") + "&api_key=" + API_KEY + "&format=json";
+            System.out.println("Artist Info URL: " + artistInfoUrl);
+            JsonNode rootNode1 = Service.getJsonNodeFromUrl(objectMapper, artistInfoUrl, httpClient);
+            JsonNode artistSummaryNode = rootNode1.path("artist").path("bio").path("summary");
+            artistSummary = artistSummaryNode.asText();
+
+
+            String spotifyAccessToken = SpotifyService.getAccessToken(SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET);
+            String artistSpotifyId = SpotifyService.getArtistSpotifyId(spotifyAccessToken, artistName);
+            artistImageUrl = SpotifyService.getArtistImageURL(artistSpotifyId, spotifyAccessToken);
+
+            Document newArtist = new Document("name", artistName.replace("+", " "))
+                    .append("image", artistImageUrl)
+                    .append("bio", artistSummary);
+
+            artists.insertOne(newArtist);
 
         }
 
-        System.out.println("this is artist name:" + artistName);
-        System.out.println("this is filter:" + filter);
 
-        //if spotify image dont work use this
-
-        /*String searchingArtistName = artistName.replace(" ", "+");
-        String artistInfoUrl = BASE_URL + "?method=artist.getinfo&artist=" + searchingArtistName + "&api_key=" + API_KEY + "&format=json";
-        JsonNode rootNode =  Service.getJsonNodeFromUrl(objectMapper, artistInfoUrl, httpClient);
-        String artistMBID = rootNode.path("artist").path("mbid").asText();
-        System.out.println("Artists mbid: " + artistMBID);*/
-
-
-        String spotifyAccessToken = SpotifyService.getAccessToken(SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET);
-
-        System.out.println("This is aceess token: " + spotifyAccessToken);
-        String artistSpotifyId = SpotifyService.getArtistSpotifyId(spotifyAccessToken, artistName);
-        System.out.println("THIS IS SPOTIFY ARTIST ID: " + artistSpotifyId);
-
-        String artistImageUrl = SpotifyService.getArtistImageURL(artistSpotifyId, spotifyAccessToken);
-        System.out.println("This is spotify artist image url: " + artistImageUrl);
 
 
         EmbedCreateSpec.Builder embedBuilder = Service.createEmbed("Who knows " + artistName.replace("+", " ")
@@ -357,7 +532,7 @@ public class ArtistCommands {
     static Mono<?> getArtistTime(Message message, GatewayDiscordClient client, ObjectMapper objectMapper, CloseableHttpClient httpClient) throws JsonProcessingException {
         String[] command = message.getContent().split(" ");
 
-        String artist = "";
+        String artist;
         if (command.length >= 2) {
             System.out.println(Arrays.toString(command));
 
@@ -380,18 +555,11 @@ public class ArtistCommands {
                         .stream()
                         .skip(1)
                         .collect(Collectors.joining(" "));
-
             }
 
-
         } else {
-
             artist = Service.getUserCurrentTrackArtistName(objectMapper, httpClient, message);
             artist = artist.replace("+", " ");
-
-
-            // return message.getChannel().flatMap(channel -> channel.createMessage("currently can only do $artisttime artist, will do $artisttime for current artist later"));
-
         }
 
         String username = client.getUserById(Snowflake.of(message.getAuthor().get().getId().asLong()))
@@ -407,23 +575,30 @@ public class ArtistCommands {
         MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
         MongoCollection<Document> collection = database.getCollection(username);
+        MongoCollection<Document> artists = database.getCollection("artists");
+
+        Bson artistFilter = Filters.regex("name", artist, "i");
         Bson filter = Filters.regex("artist", artist, "i");
 
 
         int totalArtistTime = 0;
-        int scrobblecount = 0;
 
         for (Document doc : collection.find(filter)) {
             int duration = doc.getInteger("duration");
-            scrobblecount += 1;
             totalArtistTime += duration;
         }
 
-        String finalArtist = artist;
-        int finalTotalArtistTime = totalArtistTime/60;
-        int finalScrobblecount = scrobblecount;
-        String finalUsername = username;
-        return message.getChannel().flatMap(channel -> channel.createMessage( finalUsername + " has spent a total of " + finalTotalArtistTime + " minutes listening to " + finalArtist + "! scrobble count: " + finalScrobblecount));
+        EmbedCreateSpec.Builder embedBuilder = Service.createEmbed(username + "'s time spent listening to " + artist);
+        embedBuilder.addField("", "You have spent a total of " + totalArtistTime/60 + " minutes listening to " + artist + "!", false);
+
+        String artistImage;
+        if (artists.find(artistFilter).first() != null) {
+            artistImage = artists.find(artistFilter).first().getString("image");
+            embedBuilder.thumbnail(artistImage);
+        }
+
+
+        return message.getChannel().flatMap(channel -> channel.createMessage(embedBuilder.build()));
 
     }
 
@@ -472,26 +647,27 @@ public class ArtistCommands {
             artistName = Service.getUserCurrentTrackArtistName(objectMapper, httpClient, message);
         }
 
+
+        MongoClient mongoClient = MongoClients.create(connectionString);
+        MongoDatabase database = mongoClient.getDatabase("spongeybot");
+        MongoCollection<Document> artists = database.getCollection("artists");
+
         String artistSummary;
         System.out.println("artist name: " + artistName);
 
-        String artistInfoUrl = BASE_URL + "?method=artist.getinfo&artist=" + artistName + "&api_key=" + API_KEY + "&format=json";
-        System.out.println("this is artist info url: " + artistInfoUrl);
-        HttpGet requestArtistInfo = new HttpGet(artistInfoUrl);
-        HttpResponse responseArtistInfo;
-        try {
-            responseArtistInfo = httpClient.execute(requestArtistInfo);
-        } catch (IOException e) {
-            return message.getChannel().flatMap(channel -> channel.createMessage("error: couldn't execute search track for artist name url"));
-        }
+        Bson artistFilter = Filters.regex("name", artistName.replace("+", " "), "i");
+        if (artists.find(artistFilter).first() != null) {
+            System.out.println("Artist in db");
+            artistSummary = artists.find(artistFilter).first().getString("bio");
+        } else {
+            String artistInfoUrl = BASE_URL + "?method=artist.getinfo&artist=" + artistName + "&api_key=" + API_KEY + "&format=json";
+            System.out.println("Artist Info URL: " + artistInfoUrl);
 
-        try {
-            JsonNode rootNode1 =  objectMapper.readTree(responseArtistInfo.getEntity().getContent());
+            JsonNode rootNode1 = Service.getJsonNodeFromUrl(objectMapper, artistInfoUrl, httpClient);
             JsonNode artistSummaryNode = rootNode1.path("artist").path("bio").path("summary");
             System.out.println("This is artistsumarynode " +  artistSummaryNode);
             artistSummary = artistSummaryNode.asText();
-        } catch (Exception e) {
-            return message.getChannel().flatMap(channel -> channel.createMessage("error: couldn't get nodes fromartist info url "));
+
         }
 
 
@@ -505,13 +681,25 @@ public class ArtistCommands {
 
         String artistImageUrl = SpotifyService.getArtistImageURL(artistSpotifyId, spotifyAccessToken);
 
-        MongoClient mongoClient = MongoClients.create(connectionString);
-        MongoDatabase database = mongoClient.getDatabase("spongeybot");
+
         MongoCollection<Document> scrobbles = database.getCollection(username);
 
 
         Set<String> allArtistsTracks = SpotifyService.getArtistsTracksAll(spotifyAccessToken, artistSpotifyId);
-        List<String> tracksNotListenedTo = Service.getListOfTracksNotListenedTo(artistName, allArtistsTracks, scrobbles);
+       // List<String> tracksNotListenedTo = Service.getListOfTracksNotListenedTo(artistName, allArtistsTracks, scrobbles);
+        List<String> tracksNotListenedTo;
+        List<String> expectedKey = new ArrayList<>();
+        expectedKey.add(username);
+        expectedKey.add(artistName.replace("+", " "));
+
+        if (tracksNotListenedToCache.containsKey(expectedKey)) {
+            System.out.println("already in cache");
+            tracksNotListenedTo = tracksNotListenedToCache.get(expectedKey);
+        } else {
+            tracksNotListenedTo = Service.getListOfTracksNotListenedTo(artistName, allArtistsTracks, scrobbles);
+            tracksNotListenedToCache.put(expectedKey, tracksNotListenedTo);
+            System.out.println("Saved in cache with name: " + expectedKey);
+        }
 
         int numArtistTracks = allArtistsTracks.size();
 
@@ -526,20 +714,37 @@ public class ArtistCommands {
         embedBuilder.footer("Tracks not including songs artist has featured on/appears on", "https://i.imgur.com/F9BhEoz.png");
 
 
-
         return message.getChannel().flatMap(channel -> channel.createMessage(embedBuilder.build()));
     }
 
 
     static Mono<?> topArtistsCommand(Message message, ObjectMapper objectMapper, CloseableHttpClient httpClient) {
-        //week, month
         String[] command = message.getContent().split(" ");
 
-        String timePeriod; //overall if blank
+        String timePeriod = "";
         if (command.length >= 2) {
             timePeriod = command[1];
-            System.out.println("timePeriod: " + timePeriod);
         }
+
+        String periodForAPI = "";
+
+        if (Objects.equals(timePeriod, "lifetime")) {
+            periodForAPI = "overall";
+        } else if (Objects.equals(timePeriod, "week")) {
+            periodForAPI = "7day";
+        } else if (Objects.equals(timePeriod, "month")) {
+            periodForAPI = "1month";
+        } else if (Objects.equals(timePeriod, "quarter")) {
+            periodForAPI = "3month";
+        } else if (Objects.equals(timePeriod, "halfyear")) {
+            periodForAPI = "6month";
+        } else if (Objects.equals(timePeriod, "year")) {
+            periodForAPI = "12month";
+        } else {
+            return message.getChannel().flatMap(channel -> channel.createMessage("Invalid time period provided: week, month, quarter, halfyear, year, lifetime"));
+
+        }
+        System.out.println("Period: " + periodForAPI);
 
 
         String userSessionKey = Service.getUserSessionKey(message);
@@ -549,41 +754,23 @@ public class ArtistCommands {
 
         }
 
-        String url = BASE_URL + "?method=user.gettopartists&api_key=" + API_KEY + "&sk=" + userSessionKey + "&limit=5" + "&format=json";
-        return message.getChannel()
-                .flatMap(userResponse -> {
-                    try {
-                        JsonNode rootNode =  Service.getJsonNodeFromUrl(objectMapper, url, httpClient);
+        String url = BASE_URL + "?method=user.gettopartists&api_key=" + API_KEY + "&sk=" + userSessionKey + "&limit=10&period=" + periodForAPI + "&format=json";
+        JsonNode rootNode =  Service.getJsonNodeFromUrl(objectMapper, url, httpClient);
+        JsonNode topArtistsNode = rootNode.path("topartists");
 
-                        EmbedCreateSpec.Builder embedBuilder = Service.createEmbed("Your top artists");
+        EmbedCreateSpec.Builder embedBuilder = Service.createEmbed("Your top artists for " + timePeriod);
 
+        int count = 1;
+        for (JsonNode artistNode : topArtistsNode.path("artist")) {
+            String name = artistNode.path("name").asText();
+            String playcount = artistNode.path("playcount").asText();
+            String artistUrl = artistNode.path("url").asText();
+            String hyperlinkText = "**[" + name + "](" + artistUrl + ")**";
+            embedBuilder.addField("", "**" + count + "**. " + hyperlinkText + ": " + playcount + " plays", false);
+            count += 1;
+        }
 
-                        JsonNode topArtistsNode = rootNode.path("topartists");
-
-                        for (JsonNode artistNode : topArtistsNode.path("artist")) {
-                            String name = artistNode.path("name").asText();
-                            String playcount = artistNode.path("playcount").asText();
-                            String imageUrl = artistNode.path("image")
-                                    .elements()
-                                    .next()
-                                    .path("#text")
-                                    .asText();
-                            embedBuilder.thumbnail(imageUrl);
-
-                            embedBuilder.addField(name, "Plays: " + playcount, false);
-
-                        }
-
-                        return message.getChannel().flatMap(channel -> channel.createMessage(embedBuilder.build()));
-
-                    } catch (Exception e) {
-                        e.printStackTrace();
-                    }
-
-                    return Mono.empty();
-                });
-
-
+        return message.getChannel().flatMap(channel -> channel.createMessage(embedBuilder.build()));
     }
 
 

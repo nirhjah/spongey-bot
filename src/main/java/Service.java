@@ -195,7 +195,7 @@ public class Service {
 
     }
 
-    static List<String> getListOfTracksNotListenedTo(String artistName, Set<String> allArtistsTracks, MongoCollection<Document> scrobbles) {
+    static List<String> ge2tListOfTracksNotListenedTo(String artistName, Set<String> allArtistsTracks, MongoCollection<Document> scrobbles) {
         List<String> tracksNotListenedTo = new ArrayList<>();
         String newArtistname = artistName.replace("+", " ");
         for (String track : allArtistsTracks) {
@@ -209,6 +209,28 @@ public class Service {
                 tracksNotListenedTo.add(track);
             }
         }
+        return tracksNotListenedTo;
+    }
+
+
+    static List<String> getListOfTracksNotListenedTo(String artistName, Set<String> allArtistsTracks, MongoCollection<Document> scrobbles) {
+        List<String> tracksNotListenedTo = new ArrayList<>();
+        String newArtistName = artistName.replace("+", " ");
+
+        // Fetch all scrobbles for the given artist in a single query
+        Bson artistFilter = Filters.regex("artist", newArtistName, "i");
+        List<Document> artistScrobbles = scrobbles.find(artistFilter).into(new ArrayList<>());
+
+        for (String track : allArtistsTracks) {
+            // Check if the track is not in the artistScrobbles set
+            boolean isListened = artistScrobbles.stream()
+                    .anyMatch(doc -> track.equalsIgnoreCase(doc.getString("track")));
+
+            if (!isListened) {
+                tracksNotListenedTo.add(track);
+            }
+        }
+
         return tracksNotListenedTo;
     }
 
