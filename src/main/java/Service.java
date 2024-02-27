@@ -1,6 +1,8 @@
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mongodb.client.*;
+import com.mongodb.client.model.Accumulators;
+import com.mongodb.client.model.Aggregates;
 import com.mongodb.client.model.Filters;
 import discord4j.common.util.Snowflake;
 import discord4j.core.GatewayDiscordClient;
@@ -23,6 +25,9 @@ import java.util.regex.Pattern;
 public class Service {
 
     static String connectionString = System.getenv("CONNECTION_STRING");
+
+    private static final MongoClient mongoClient = MongoClients.create(connectionString);
+
     private static final String BASE_URL = "http://ws.audioscrobbler.com/2.0/";
     private static final String API_KEY = System.getenv().get("API_KEY");
 
@@ -41,7 +46,6 @@ public class Service {
                 .getUsername();
 
 
-        MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
         MongoCollection<Document> userScrobbles = database.getCollection(username);
         Bson artistFilter = Filters.all("artist", artist);
@@ -50,6 +54,19 @@ public class Service {
 
         return artistPlays;
 
+
+    }
+
+    static Map<String, Integer> getUsersArtistTracks(MongoCollection<Document> collection, Bson filter) {
+        Map<String, Integer> artistTracks = new HashMap<>();
+
+
+        for (Document doc : collection.find(filter)) {
+            int currentCount = artistTracks.getOrDefault(doc.getString("track"), 0);
+            artistTracks.put(doc.getString("track"), currentCount + 1);
+        }
+
+        return artistTracks;
 
     }
 
@@ -156,7 +173,20 @@ public class Service {
 
 
     static int calculateListeningTime(MongoCollection<Document> scrobblesCollection, Bson filter) {
-        int listeningTime = 0;
+
+        List<Bson> pipeline = Arrays.asList(
+                Aggregates.match(filter),
+                Aggregates.group(null, Accumulators.sum("totalDuration", "$duration"))
+        );
+
+        AggregateIterable<Document> aggregationResults = scrobblesCollection.aggregate(pipeline);
+
+        Document result = aggregationResults.first();
+        int listeningTime = (result != null) ? result.getInteger("totalDuration", 0) : 0;
+
+        return listeningTime;
+
+      /*  int listeningTime = 0;
 
         FindIterable<Document> results = scrobblesCollection.find(filter);
 
@@ -164,10 +194,10 @@ public class Service {
         for (Document doc : results) {
             int trackDurationSeconds = doc.getInteger("duration");
             listeningTime += trackDurationSeconds;
-        }
+        }*/
 
 
-        return listeningTime;
+       // return listeningTime;
     }
 
 
@@ -213,6 +243,16 @@ public class Service {
     }
 
 
+    static Map<String, Integer> getUsersCrowns( MongoCollection<Document> crowns, Bson filter) {
+        Map<String, Integer> crownMap = new HashMap<>(); //owner, total crowns
+
+        for (Document crown : crowns.find(filter)) {
+            crownMap.put(crown.getString("artist"), crown.getInteger("ownerPlays"));
+        }
+        return crownMap;
+
+    }
+
     static List<String> getListOfTracksNotListenedTo(String artistName, Set<String> allArtistsTracks, MongoCollection<Document> scrobbles) {
         List<String> tracksNotListenedTo = new ArrayList<>();
         String newArtistName = artistName.replace("+", " ");
@@ -234,15 +274,14 @@ public class Service {
         return tracksNotListenedTo;
     }
 
-    static String getFirstTimeListeningToArtist(String artist, String username) {
-        MongoClient mongoClient = MongoClients.create(connectionString);
+    static LocalDateTime getFirstTimeListeningToTrack(Bson filter, String username) {
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
         MongoCollection<Document> collection = database.getCollection(username);
-        int minTimestamp = (int) (System.currentTimeMillis() / 1000);
-        //String artistReal = collection.find(filter).first().getString("artist");
-        Bson newFilter = Filters.eq("artist", artist);
 
-        for (Document doc : collection.find(newFilter)) {
+        int minTimestamp = (int) (System.currentTimeMillis() / 1000);
+        //Bson newFilter = Filters.regex("track", track, "i");
+
+        for (Document doc : collection.find(filter)) {
 
             int timestamp = doc.getInteger("timestamp");
             // For min timestamp
@@ -254,10 +293,76 @@ public class Service {
 
         Instant instant = Instant.ofEpochSecond(minTimestamp);
         LocalDateTime dateTime = LocalDateTime.ofInstant(instant, ZoneId.systemDefault());
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd MMMM yyyy");
-        return dateTime.format(formatter);
+        return dateTime;
     }
 
+    static List<String> getFirstTimeAndTrackListeningToArtist(String artist, String username) {
+        List<String> timeAndTrack = new ArrayList<>();
+        MongoDatabase database = mongoClient.getDatabase("spongeybot");
+        MongoCollection<Document> collection = database.getCollection(username);
+        int minTimestamp = (int) (System.currentTimeMillis() / 1000);
+        String trackName = "";
+        Bson newFilter = Filters.eq("artist", artist);
+
+        for (Document doc : collection.find(newFilter)) {
+
+            int timestamp = doc.getInteger("timestamp");
+            // For min timestamp
+            if (timestamp < minTimestamp) {
+                minTimestamp = timestamp;
+                trackName = doc.getString("track");
+            }
+
+        }
+
+        Instant instant = Instant.ofEpochSecond(minTimestamp);
+        LocalDateTime dateTime = LocalDateTime.ofInstant(instant, ZoneId.systemDefault());
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd MMMM yyyy");
+        timeAndTrack.add(dateTime.format(formatter));
+        timeAndTrack.add(trackName);
+        return timeAndTrack;
+    }
+
+
+    /**
+     * Gets track name for user's current track
+     * @param objectMapper object mapper
+     * @param httpClient http client
+     * @param message message
+     * @return track name
+     */
+    static String getUserCurrentTrackName(ObjectMapper objectMapper, CloseableHttpClient httpClient, Message message) {
+
+        String track = "";
+
+        String userSessionKey = Service.getUserSessionKey(message);
+
+        String getRecentUserTracksUrl = BASE_URL + "?method=user.getrecenttracks&api_key=" + API_KEY + "&sk=" + userSessionKey + "&format=json";
+        System.out.println("recent tracksu rl: " + getRecentUserTracksUrl);
+
+        try {
+            JsonNode rootNode =  Service.getJsonNodeFromUrl(objectMapper, getRecentUserTracksUrl, httpClient);
+            JsonNode trackNode = rootNode.path("recenttracks").path("track");
+            JsonNode firstTrackNode = trackNode.get(0);
+            track = firstTrackNode.path("name").asText();
+            JsonNode artistNode = firstTrackNode.path("artist").path("#text");
+
+            System.out.println("This is artist name for track: " + artistNode.asText());
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        return track;
+    }
+
+    /**
+     * Gets artist name for user's current track
+     * @param objectMapper object mapper
+     * @param httpClient http client
+     * @param message message
+     * @return Artist name
+     */
     static String getUserCurrentTrackArtistName(ObjectMapper objectMapper, CloseableHttpClient httpClient, Message message) {
 
         String artistName = "";
@@ -286,7 +391,6 @@ public class Service {
 
         int scrobbleCounterForYear = 0;
 
-        MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
         MongoCollection<Document> collection = database.getCollection(username);
 
@@ -317,7 +421,6 @@ public class Service {
 
     static int getTotalArtistsForYear(int year, String username, long userid) {
 
-        MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
         MongoCollection<Document> collection = database.getCollection(username);
 
@@ -353,7 +456,6 @@ public class Service {
 
     static int getTotalTracksForYear(int year, String username, long userid) {
 
-        MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
         MongoCollection<Document> collection = database.getCollection(username);
 

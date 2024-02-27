@@ -20,6 +20,7 @@ public class LeaderboardCommands {
 
     static String connectionString = System.getenv("CONNECTION_STRING");
 
+    private static final MongoClient mongoClient = MongoClients.create(connectionString);
 
 
     static Mono<?> scrobbleLbCommand(Message message, GatewayDiscordClient client) {
@@ -38,7 +39,6 @@ public class LeaderboardCommands {
 
         EmbedCreateSpec.Builder embedBuilder = Service.createEmbed("Scrobble leaderboard for " + timePeriod);
 
-        MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
         MongoCollection<Document> collection = database.getCollection("users");
 
@@ -52,6 +52,11 @@ public class LeaderboardCommands {
                     .getUsername();
 
             MongoCollection<Document> scrobbleCollection = database.getCollection(username);
+
+            String lastfmUsername = document.getString("lastfmUsername");
+            String lastFmProfile ="https://www.last.fm/user/" + lastfmUsername;
+            String hyperlinkText = "**[" + username + "](" + lastFmProfile + ")**";
+
 
             ZoneId userTimeZone = ZoneId.of(document.getString("timezone"));
 
@@ -83,7 +88,7 @@ public class LeaderboardCommands {
             );
 
             userPlaycount = (int) scrobbleCollection.countDocuments(filter);
-            unsortedscrobbleLb.put(username, userPlaycount);
+            unsortedscrobbleLb.put(hyperlinkText, userPlaycount);
 
         }
 
@@ -122,7 +127,6 @@ public class LeaderboardCommands {
         }
 
 
-        MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
         MongoCollection<Document> userCollection = database.getCollection("users");
 
@@ -139,6 +143,12 @@ public class LeaderboardCommands {
             String username = client.getUserById(Snowflake.of(userId))
                     .block()
                     .getUsername();
+
+            String lastfmUsername = user.getString("lastfmUsername");
+            String lastFmProfile ="https://www.last.fm/user/" + lastfmUsername;
+            String hyperlinkText = "**[" + username + "](" + lastFmProfile + ")**";
+
+
 
 
             MongoCollection<Document> scrobblesCollection = database.getCollection(username);
@@ -174,7 +184,7 @@ public class LeaderboardCommands {
             );
 
             listeningTime = Service.calculateListeningTime(scrobblesCollection, filter);
-            userAndTime.put(username, listeningTime);
+            userAndTime.put(hyperlinkText, listeningTime);
         }
 
 
@@ -236,18 +246,22 @@ public class LeaderboardCommands {
 
         EmbedCreateSpec.Builder embedBuilder = Service.createEmbed("Artist leaderboard for " + timePeriod);
 
-        MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
         MongoCollection<Document> collection = database.getCollection("users");
 
 
         for (Document document : collection.find()) {
-            int userPlaycount;
             long userId = document.getLong("userid");
 
             String username = client.getUserById(Snowflake.of(userId))
                     .block()
                     .getUsername();
+
+            String lastfmUsername = document.getString("lastfmUsername");
+            String lastFmProfile ="https://www.last.fm/user/" + lastfmUsername;
+            String hyperlinkText = "**[" + username + "](" + lastFmProfile + ")**";
+
+
 
             MongoCollection<Document> scrobbleCollection = database.getCollection(username);
 
@@ -292,7 +306,7 @@ public class LeaderboardCommands {
             }
 
 
-            unsortedscrobbleLb.put(username, uniqueArtists.size());
+            unsortedscrobbleLb.put(hyperlinkText, uniqueArtists.size());
 
         }
 
@@ -331,7 +345,6 @@ public class LeaderboardCommands {
 
         EmbedCreateSpec.Builder embedBuilder = Service.createEmbed("Track leaderboard for " + timePeriod);
 
-        MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
         MongoCollection<Document> collection = database.getCollection("users");
 
@@ -342,6 +355,11 @@ public class LeaderboardCommands {
             String username = client.getUserById(Snowflake.of(userId))
                     .block()
                     .getUsername();
+
+            String lastfmUsername = document.getString("lastfmUsername");
+            String lastFmProfile ="https://www.last.fm/user/" + lastfmUsername;
+            String hyperlinkText = "**[" + username + "](" + lastFmProfile + ")**";
+
 
             MongoCollection<Document> scrobbleCollection = database.getCollection(username);
 
@@ -389,7 +407,7 @@ public class LeaderboardCommands {
             }
 
 
-            unsortedscrobbleLb.put(username, uniqueTracks.size());
+            unsortedscrobbleLb.put(hyperlinkText, uniqueTracks.size());
 
         }
 
@@ -413,7 +431,6 @@ public class LeaderboardCommands {
 
 
     static Mono<?> getCrownLb(Message message, GatewayDiscordClient client) throws JsonProcessingException {
-        MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
         MongoCollection<Document> crowns = database.getCollection("crowns");
 

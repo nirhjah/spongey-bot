@@ -31,6 +31,9 @@ public class UserScrobbleCommands {
 
     static String connectionString = System.getenv("CONNECTION_STRING");
 
+    private static final MongoClient mongoClient = MongoClients.create(connectionString);
+
+
     static StringBuilder getArtistTrackOrAlbumInfoForYear(String year, String username, String type) {
 
         StringBuilder fieldToSave = new StringBuilder();
@@ -38,7 +41,6 @@ public class UserScrobbleCommands {
         int currentTimeUTS = (int) (System.currentTimeMillis() / 1000);
 
 
-        MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
         MongoCollection<Document> collection = database.getCollection(username);
 
@@ -249,7 +251,6 @@ public class UserScrobbleCommands {
 
         EmbedCreateSpec.Builder embedBuilder = Service.createEmbed(username2 + " stats for " + year);
 
-        MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
         MongoCollection<Document> users = database.getCollection("users");
         Document userDocument = users.find(Filters.eq("username", username2)).first();
@@ -440,7 +441,6 @@ public class UserScrobbleCommands {
         String[] words = authorName.split("\\s+");
         String year = words[words.length - 1];
         String username = words[0];
-        MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
 
         int prevYear = Integer.parseInt(year)-1;
@@ -499,7 +499,18 @@ public class UserScrobbleCommands {
         } else if ("prevTracks".equals(customId)) {
             System.out.println("Clicked prev tracks");
             ArtistCommands.handleTracksNotListenedButtonClick(message, message.getEmbeds().get(0), false);
-
+        } else if ("nextCrowns".equals(customId)) {
+            System.out.println("Clicked next crowns");
+            CrownsCommands.handleCrownsButtonClick(message, message.getEmbeds().get(0), true);
+        } else if ("prevCrowns".equals(customId)) {
+            System.out.println("Clicked prev crowns");
+            CrownsCommands.handleCrownsButtonClick(message, message.getEmbeds().get(0), false);
+        }  else if ("nextArtistTracks".equals(customId)) {
+            System.out.println("Clicked next artisttracks");
+            ArtistCommands.handleArtistTracksButtonClick(message, message.getEmbeds().get(0), true);
+        } else if ("prevArtistTracks".equals(customId)) {
+            System.out.println("Clicked prev artisttracks");
+            ArtistCommands.handleArtistTracksButtonClick(message, message.getEmbeds().get(0), false);
         }
 
         return Mono.empty();
@@ -525,7 +536,6 @@ public class UserScrobbleCommands {
                 .block()
                 .getUsername();
 
-        MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
         MongoCollection<Document> collection = database.getCollection(username);
 
@@ -578,7 +588,6 @@ public class UserScrobbleCommands {
 
 
 
-        MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
         MongoCollection<Document> collection = database.getCollection(username);
         MongoCollection<Document> users = database.getCollection("users");
@@ -648,7 +657,6 @@ public class UserScrobbleCommands {
         }
 
 
-        MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
         MongoCollection<Document> userCollection = database.getCollection("users");
 

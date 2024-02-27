@@ -15,11 +15,9 @@ import org.bson.Document;
 import org.bson.conversions.Bson;
 import reactor.core.publisher.Mono;
 
-import java.time.Instant;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
+import java.time.*;
 import java.time.format.DateTimeFormatter;
+import java.time.temporal.TemporalField;
 import java.util.*;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -28,6 +26,7 @@ public class TrackCommands {
 
     static String connectionString = System.getenv("CONNECTION_STRING");
 
+    private static final MongoClient mongoClient = MongoClients.create(connectionString);
 
     private static final String BASE_URL = "http://ws.audioscrobbler.com/2.0/";
 
@@ -46,7 +45,6 @@ public class TrackCommands {
 
         System.out.println("THIS IS TRACKNAME: " + trackName);
 
-        MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
         MongoCollection<Document> collection = database.getCollection("users");
 
@@ -133,6 +131,13 @@ public class TrackCommands {
                     .block()
                     .getUsername();
 
+            String lastfmUsername = document.getString("lastfmUsername");
+
+            String lastFmProfile ="https://www.last.fm/user/" + lastfmUsername;
+            String hyperlinkText = "**[" + username + "](" + lastFmProfile + ")**";
+
+
+
             MongoCollection<Document> userScrobblesCollection = database.getCollection(username);
 
             userTrackCount = (int) userScrobblesCollection.countDocuments(filter);
@@ -143,7 +148,7 @@ public class TrackCommands {
                 System.out.println(userScrobblesCollection.find(filter).first().getString("artist"));
 
                 embedBuilder.thumbnail(userScrobblesCollection.find(filter).first().getString("albumLink"));
-                unsortedWk.put(username, userTrackCount);
+                unsortedWk.put(hyperlinkText, userTrackCount);
             }
 
 
@@ -160,9 +165,8 @@ public class TrackCommands {
         int count = 1;
         StringBuilder wktString = new StringBuilder();
         for (Map.Entry<String, Integer> entry : sortedWkt) {
-            String lastFmUserURL = "https://www.last.fm/user/" + "spongeystar16";
 
-            wktString.append(count).append(". ").append("**" + "[").append(entry.getKey()).append("](").append(lastFmUserURL).append(")").append(" - ").append(entry.getValue()).append("** plays \n");
+            wktString.append(count).append(". ").append(entry.getKey()).append(" - ").append(entry.getValue()).append(" plays \n");
             count++;
 
         }
@@ -189,7 +193,6 @@ public class TrackCommands {
 
         Map<List<String>, Integer> mostListenedToInOneDay = new HashMap<>();
 
-        MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
         MongoCollection<Document> collection = database.getCollection(username);
 
@@ -283,7 +286,124 @@ public class TrackCommands {
     }
 
 
-    static Mono<?> getTrackInfo(Message message, GatewayDiscordClient client) throws JsonProcessingException {
+    static Mono<?> getFakeFan(Message message, GatewayDiscordClient client, ObjectMapper objectMapper, CloseableHttpClient httpClient) throws JsonProcessingException {
+        String trackName = Arrays.stream(message.getContent().split(" "))
+                .collect(Collectors.toList())
+                .stream()
+                .skip(1)
+                .collect(Collectors.joining("+"));
+
+        String artist = "";
+
+        System.out.println("THIS IS TRACKNAME: " + trackName);
+
+        MongoDatabase database = mongoClient.getDatabase("spongeybot");
+
+        String userSessionKey = Service.getUserSessionKey(message);
+
+
+
+        if (userSessionKey == null) {
+            return message.getChannel().flatMap(channel -> channel.createMessage("please login to use this command"));
+
+        }
+
+        Bson filter;
+
+        filter = Filters.regex("track",  trackName.replace("+", " "), "i");
+
+        if (trackName.equals("")) {
+            //get users current track, name from that and set trackName to that
+            String getRecentUserTracksUrl = BASE_URL + "?method=user.getrecenttracks&api_key=" + API_KEY + "&sk=" + userSessionKey + "&format=json";
+            System.out.println("recent tracks url: " + getRecentUserTracksUrl);
+            JsonNode rootNode =  Service.getJsonNodeFromUrl(objectMapper, getRecentUserTracksUrl, httpClient);
+
+            try {
+                JsonNode trackNode = rootNode.path("recenttracks").path("track");
+                JsonNode firstTrackNode = trackNode.get(0);
+                JsonNode trackNodeMain = firstTrackNode.path("name");
+                JsonNode artistNode = firstTrackNode.path("artist").path("#text");
+                artist = artistNode.asText().replace(" ", "+");
+                trackName = trackNodeMain.asText().replace(" ", "+");
+
+
+                filter = Filters.and(
+                        Filters.regex("track", "^" + Pattern.quote(trackName.replace("+", " ")), "i"),
+                        Filters.regex("artist", "^" + Pattern.quote(artist.replace("+", " ")), "i")
+                );
+
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        } else {
+
+            String searchUrl = "https://ws.audioscrobbler.com/2.0/?method=track.search&track=" + trackName + "&api_key=" + API_KEY + "&format=json";
+
+            JsonNode rootNodeForSearch =  Service.getJsonNodeFromUrl(objectMapper, searchUrl, httpClient);
+            JsonNode trackListForSearch = rootNodeForSearch.path("results").path("trackmatches").path("track");
+
+            if (trackListForSearch.size() > 0) {
+                JsonNode firstTrackNode = trackListForSearch.get(0);
+                trackName = firstTrackNode.path("name").asText();
+                artist = firstTrackNode.path("artist").asText();
+
+
+                filter = Filters.and(
+                        Filters.regex("track", "^" + Pattern.quote(trackName.replace("+", " ")), "i"),
+                        Filters.regex("artist", "^" + Pattern.quote(artist.replace("+", " ")), "i")
+                );
+
+            }
+
+        }
+
+            MongoCollection<Document> users = database.getCollection("users");
+            Map<LocalDateTime, String> timeAndUser = new HashMap<>();
+
+
+        for (Document document : users.find()) {
+                long userId = document.getLong("userid");
+
+                String username = client.getUserById(Snowflake.of(userId))
+                        .block()
+                        .getUsername();
+            timeAndUser.put(Service.getFirstTimeListeningToTrack(filter, username), username);
+
+            }
+
+            System.out.println("This is timeanduser: " + timeAndUser);
+            Map.Entry<LocalDateTime, String> earliestEntry = null;
+            LocalDateTime earliestDateTime = LocalDateTime.now();
+
+            for (Map.Entry<LocalDateTime, String> entry : timeAndUser.entrySet()) {
+                LocalDateTime usersTime = entry.getKey();
+                if (usersTime.isBefore(earliestDateTime)) {
+                    earliestDateTime = usersTime;
+                    earliestEntry = entry;
+                }
+
+            }
+
+            EmbedCreateSpec.Builder embedBuilder = Service.createEmbed("Who listened to " + trackName.replace("+", " ") + " by " + artist.replace("+", " ") + " first?");
+            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd MMMM yyyy");
+
+            LocalDateTime now = LocalDateTime.now();
+            if (earliestEntry.getKey().getDayOfMonth() == now.getDayOfMonth() && earliestEntry.getKey().getMonth() == now.getMonth()) {
+
+
+                embedBuilder.addField("", "No one has listened yet :(", false);
+
+
+            } else {
+                embedBuilder.addField("", earliestEntry.getValue() + " on " +  earliestEntry.getKey().format(formatter), false);
+            }
+
+            return message.getChannel().flatMap(channel -> channel.createMessage(embedBuilder.build()));
+
+        }
+
+
+        static Mono<?> getTrackInfo(Message message, GatewayDiscordClient client, ObjectMapper objectMapper, CloseableHttpClient httpClient) throws JsonProcessingException {
         String[] command = message.getContent().split(" ");
 
         String track;
@@ -319,7 +439,10 @@ public class TrackCommands {
 
 
         } else {
-            return message.getChannel().flatMap(channel -> channel.createMessage("currently can only do $trackinfo track, will do trackinfo for current track later"));
+            System.out.println("CURRENT: " +  Service.getUserCurrentTrackName(objectMapper, httpClient, message));
+
+            track = Service.getUserCurrentTrackName(objectMapper, httpClient, message);
+            //return message.getChannel().flatMap(channel -> channel.createMessage("crrently can only do $trackinfo track, will do trackinfo for current track later"));
 
         }
 
@@ -335,7 +458,6 @@ public class TrackCommands {
         }
 
 
-        MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
         MongoCollection<Document> collection = database.getCollection(username);
 
@@ -449,7 +571,6 @@ public class TrackCommands {
 
         EmbedCreateSpec.Builder embedBuilder = Service.createEmbed("Your top 5 longest tracks");
 
-        MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
         MongoCollection<Document> scrobbles = database.getCollection(username);
         Map<String, Integer> shortestSongs = new HashMap<>();

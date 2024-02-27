@@ -2,7 +2,8 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mongodb.client.*;
-import com.mongodb.client.model.Filters;
+import com.mongodb.client.model.*;
+import com.mongodb.client.result.DeleteResult;
 import discord4j.common.util.Snowflake;
 import discord4j.core.DiscordClient;
 import discord4j.core.GatewayDiscordClient;
@@ -12,7 +13,6 @@ import discord4j.core.event.domain.message.MessageCreateEvent;
 import discord4j.core.object.entity.Message;
 
 
-import discord4j.core.object.entity.User;
 import discord4j.core.object.presence.ClientActivity;
 import discord4j.core.object.presence.ClientPresence;
 import discord4j.core.spec.EmbedCreateSpec;
@@ -40,7 +40,11 @@ import static com.mongodb.client.model.Filters.*;
 
 public class SpongeyBot {
 
+
     static String connectionString = System.getenv("CONNECTION_STRING");
+
+    private static final MongoClient mongoClient = MongoClients.create(connectionString);
+
 
     private static final String BOT_TOKEN = System.getenv("BOT_TOKEN");
 
@@ -51,12 +55,18 @@ public class SpongeyBot {
     private static final String API_SECRET = System.getenv("API_SECRET");
 
 
-        static void betterupdaterecentcommand(ObjectMapper objectMapper, CloseableHttpClient httpClient) throws UnsupportedEncodingException {
-        MongoClient mongoClient = MongoClients.create(connectionString);
-        MongoDatabase database = mongoClient.getDatabase("spongeybot");
-        MongoCollection<Document> tracks = database.getCollection("tracks");
-            MongoCollection<Document> users = database.getCollection("users");
+    private static final String SPOTIFY_CLIENT_ID = System.getenv().get("SPOTIFY_CLIENT_ID");
 
+
+    private static final String SPOTIFY_CLIENT_SECRET = System.getenv().get("SPOTIFY_CLIENT_SECRET");
+
+
+
+
+    static void betterupdaterecentcommand(ObjectMapper objectMapper, CloseableHttpClient httpClient) throws Exception {
+            MongoDatabase database = mongoClient.getDatabase("spongeybot");
+            MongoCollection<Document> tracks = database.getCollection("tracks");
+            MongoCollection<Document> users = database.getCollection("users");
 
 
             for (Document document : users.find()) {
@@ -65,29 +75,19 @@ public class SpongeyBot {
                 String sessionKey = document.getString("sessionkey");
 
              /*   if (userId == 259492875153178634L) {
-                    System.out.println("this is spongey skipping because new tracks foud lol");
                     continue;
                 }*/
 
-
                 System.out.println("Now updating recent of user: " + userId + " username: " + username);
-                 MongoCollection<Document> userScrobblesCollection = database.getCollection(username);
+                MongoCollection<Document> userScrobblesCollection = database.getCollection(username);
 
-
-                int maxTimestamp = 0;
-
-                FindIterable<Document> documents = userScrobblesCollection.find();
-                for (Document doc : documents) {
-                    // Get the timestamp from the current document
-                    int timestamp = doc.getInteger("timestamp");
-
-                    // Check if the current timestamp is greater than the maximum
-                    if (timestamp > maxTimestamp) {
-                        maxTimestamp = timestamp;
-                    }
-                }
-
+                //Getting latest timestamp
+                int maxTimestamp;
+                Document lastDocument = userScrobblesCollection.find().sort(Sorts.descending("timestamp")).first();
+                System.out.println("LAST DOC: " + lastDocument);
+                maxTimestamp = lastDocument.getInteger("timestamp");
                 System.out.println("Max timestamp: " + maxTimestamp);
+
 
                 //GETTING TOTAL PAGES WE HAVE NOW
                 JsonNode rootNode;
@@ -149,24 +149,75 @@ public class SpongeyBot {
                             } else {
                                 System.out.println("Track not found so add into tracks db");
 
+                                int finalDurationSeconds = 0;
+
                                 String encodedArtistName = URLEncoder.encode(artist, "UTF-8");
                                 String encodedTrackName = URLEncoder.encode(trackName, "UTF-8");
+                                System.out.println("encode artist: " + encodedArtistName);
+                                System.out.println("encode track: " + encodedTrackName);
 
                                 String trackInfoUrl =  "http://ws.audioscrobbler.com/2.0/?method=track.getInfo&api_key=" + API_KEY +  "&artist=" + encodedArtistName + "&track=" + encodedTrackName + "&format=json";
-                                JsonNode thisNode = Service.getJsonNodeFromUrl(objectMapper, trackInfoUrl, httpClient);
-                                int trackDurationSeconds = Integer.parseInt(thisNode.get("track").get("duration").asText())/1000 ;
-                                if (trackDurationSeconds == 0) {
-                                    trackDurationSeconds = 165;
+                                 JsonNode thisNode = Service.getJsonNodeFromUrl(objectMapper, trackInfoUrl, httpClient);
+                                //get spotify duration here, if artist dont match use 165 dont use last fm
+
+                                String artistAndTrack = trackName + " " + artist;
+                                System.out.println("This is artistandtrack: " + artistAndTrack);
+
+                                String spotifyAccessToken = SpotifyService.getAccessToken(SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET);
+
+                                //FIRST CHECK SPOTIFY ARTIST SAME, IF SAME USE SPOTIFY DURATION
+                                String trackSpotifyId = SpotifyService.getTrackSpotifyId(spotifyAccessToken, artistAndTrack);
+
+
+                                System.out.println("Checking spotify duration");
+
+                                if (trackSpotifyId != null) {
+                                    String spotifyArtist = SpotifyService.getTrackArtist(trackSpotifyId, spotifyAccessToken);
+                                    System.out.println("SPOTIFY ARTIST: " + spotifyArtist + " LASTFM ARTIST: " + artist);
+
+                                    if (spotifyArtist.trim().equalsIgnoreCase(artist)) {
+                                        //use spotify
+                                        finalDurationSeconds = SpotifyService.getTrackDuration(trackSpotifyId, spotifyAccessToken) / 1000;
+                                        System.out.println("Found atist track on spotify so using duration. spotify artist: " + spotifyArtist + " , " + artistAndTrack + " " + finalDurationSeconds );
+
+                                    }    else {
+
+                                        if (thisNode == null) {
+                                            System.out.println("Node was someone null when trying to get last fm duration so using 165");
+                                            finalDurationSeconds = 165;
+                                        } else {
+                                            finalDurationSeconds = Integer.parseInt(thisNode.get("track").get("duration").asText())/1000;
+                                        }
+
+
+                                        System.out.println("artist didnt match: " + spotifyArtist + " and " + artist + " so using last fm duration: " + finalDurationSeconds);
+
+                                        if (finalDurationSeconds == 0) {
+                                            finalDurationSeconds = 165;
+                                        }
+
+                                    }
+                                } else {
+                                    finalDurationSeconds = Integer.parseInt(thisNode.get("track").get("duration").asText())/1000;
+                                    System.out.println("spotify artist was null:   so using last fm duration: " + finalDurationSeconds);
+
+                                    if (finalDurationSeconds == 0) {
+                                        finalDurationSeconds = 165;
+                                    }
+
                                 }
+
+
+
 
 
                                 Document newTrack = new Document("track", trackName)
                                         .append("artist", artist)
-                                        .append("duration", trackDurationSeconds);
+                                        .append("duration", finalDurationSeconds);
 
                                 tracks.insertOne(newTrack);
 
-                                duration = trackDurationSeconds;
+                                duration = finalDurationSeconds;
                             }
 
                             Document scrobbleDoc = new Document("userId", userId)
@@ -194,7 +245,6 @@ public class SpongeyBot {
 
 
     static Mono<?> betterUpdateCommand(ObjectMapper objectMapper, CloseableHttpClient httpClient, Message message, GatewayDiscordClient client) throws UnsupportedEncodingException {
-        MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
         MongoCollection<Document> tracks = database.getCollection("tracks");
         MongoCollection<Document> userScrobblesCollection = database.getCollection("viperfan"); //todo change
@@ -349,7 +399,6 @@ public class SpongeyBot {
 
 
 
-        MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
         MongoCollection<Document> collection1 = database.getCollection(username);
         MongoCollection<Document> collection2 = database.getCollection(username2);
@@ -608,13 +657,14 @@ public class SpongeyBot {
 
 
 
-        MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
         MongoCollection<Document> userScrobblesCollection = database.getCollection(username);
         MongoCollection<Document> userCollection = database.getCollection("users");
-            MongoCollection<Document> overviewCollection = database.getCollection("overview");
+        MongoCollection<Document> overviewCollection = database.getCollection("overview");
+
 
         Document userDocument = userCollection.find(eq("userid", userid)).first();
+
 
         ZoneId userTimeZone = ZoneId.of(userDocument.getString("timezone"));
 
@@ -626,7 +676,6 @@ public class SpongeyBot {
 
 
 
-
             //for the last 5 days including today
         for (int i = 0; i < 5; i++) {
 
@@ -635,10 +684,9 @@ public class SpongeyBot {
 
             //overview for date we loopin through
             Document overview = overviewCollection.find(and(eq("date", date), eq("username", username))).first();
-            //if not null AND not currentdate (cuz we dont wanna save currentdate)
-            // then we wanna grab that info
+            //if not null AND not currentdate (we don't want to save current date as that always changes throughout the day)
+            // then we want to grab that info
             //else (if non existent) we wanna create a new one
-
 
             if (overview != null && date != currentDate) {
                 System.out.println("There is an overview available for date: " + date + " so we are getting it");
@@ -861,40 +909,27 @@ public class SpongeyBot {
 
                 //FIELD: TRACK AND ARTIST PERCENTS
                 List<Double> trackAndArtistPercents = getNewArtistsAndTracks(relevantDocuments, userScrobblesCollection);
-
-
                 DecimalFormat df = new DecimalFormat("0.0%");
-
                 embedBuilder.addField(dateWeLoopThrough, scrobblesForDay + " scrobbles | " + timeScrobbled/60 + " minutes\n " + df.format(trackAndArtistPercents.get(0)) + " new tracks | " + df.format(trackAndArtistPercents.get(1)) + " new artists" + "\n Top Artist: " + topArtistString +  "\nTop Album: " + topAlbumString + "\nTop Track: " + topTrackString, false);
 
             }
 
-        // Cleaning old data
-          //  Date fiveDaysAgo = Date.from(LocalDate.now().minusDays(5).atStartOfDay(ZoneId.systemDefault()).toInstant());
-
-            LocalDate currentDate2 = LocalDate.now();
-
-            // Subtract 5 days from the current date
-            LocalDate fiveDaysAgo = currentDate2.minusDays(5);
-
-            System.out.println("five days ago: " + fiveDaysAgo);
-            //todo check this works
-       /*     overviewCollection.deleteMany(and(
-                    eq("username", username),
-                    lt("date", fiveDaysAgo)));
-
-
-*/
-
             //end
         }
 
-     /*   Bson filter = and(
+        // Cleaning old data
+        LocalDate currentDate2 = LocalDate.now();
+        LocalDate fiveDaysAgo = currentDate2.minusDays(5);
+
+        System.out.println("five days ago: " + fiveDaysAgo);
+        System.out.println("OLD DOCS: ");
+
+        DeleteResult deleteResult = overviewCollection.deleteMany(and(
                 eq("username", username),
-                lt("date", Date.from(LocalDate.now().minusDays(5).atStartOfDay(ZoneId.systemDefault()).toInstant())));
+                lt("date", fiveDaysAgo)));
 
+        System.out.println("Deleted docs: " + deleteResult.getDeletedCount());
 
-*/
 
         return message.getChannel().flatMap(channel -> channel.createMessage(embedBuilder.build()));
 
@@ -906,7 +941,7 @@ public class SpongeyBot {
                 .addField("", "**$login**", false)
                 .addField("Scrobbles", "**$topscrobbleddays** - the top ten days you scrobbled the most \n **$year** - your listening stats for given year \n **$scrobbles** - how many scrobbles you have for a given year", false)
 
-                .addField("Tracks", "**$trackinfo** - provides stats about the given/current track \n **$toptracks** - your top tracks of all time \n **$wkt** - who has listened to current/given track \n **$tracksnotlistened** - tracks of given/current artist you have not listened to yet", false)
+                .addField("Tracks", "**$trackinfo** - provides stats about the given/current track \n **$toptracks** - your top tracks of all time \n **$wkt** - who has listened to current/given track \n **$tracksnotlistened** - tracks of given/current artist you have not listened to yet \n **$fakefan** shows who listened to a current/given track first", false)
 
                 .addField("Artists", "**$artisttime** - total time spent listening to artist \n **$artisttracks** - all tracks of given/current artist you have listened to \n **$artistinfo** - info about given/current artist \n **$topartists** - your top artists of all time \n **$wk** - who has listened to given/current artist", false)
 
@@ -929,7 +964,6 @@ public class SpongeyBot {
     static Mono<?> updateBotPic(ObjectMapper objectMapper, CloseableHttpClient httpClient, GatewayDiscordClient client, ReadyEvent event) throws IOException {
 
 
-        MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
         MongoCollection<Document> collection = database.getCollection("users");
         MongoCollection<Document> featuredCollection = database.getCollection("featured");
@@ -938,7 +972,7 @@ public class SpongeyBot {
 
         DayOfWeek currentDay = LocalDate.now().getDayOfWeek();
 
-        if (Objects.equals(currentDay.toString(), "MONDAY")) {
+        if (Objects.equals(currentDay.toString(), "MONDAY")) { //todo add check
             System.out.println("Today is Monday so we are assigning days to users");
 
 
@@ -1067,7 +1101,6 @@ public class SpongeyBot {
 
     static Mono<?> featuredCommand(Message message) {
 
-        MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
         MongoCollection<Document> featuredCollection = database.getCollection("featured");
 
@@ -1101,7 +1134,6 @@ public class SpongeyBot {
             username = message.getUserMentions().get(0).getUsername();
         }
 
-        MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
         MongoCollection<Document> featuredCollection = database.getCollection("featured");
 
@@ -1138,7 +1170,6 @@ public class SpongeyBot {
 
     static Mono<?> loginCommand(Message message, ObjectMapper objectMapper, CloseableHttpClient httpClient) {
 
-        MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
         MongoCollection<Document> collection = database.getCollection("users");
 
@@ -1308,13 +1339,6 @@ public class SpongeyBot {
             }
         }
 
-      /*  if (message.getContent().startsWith("$pic")) {
-            try {
-                return updateBotPic(message,objectMapper, httpClient, client, event);
-            } catch (IOException e) {
-                throw new RuntimeException(e);
-            }
-        }*/
 
         if (message.getContent().equals("$featured")) {
           return featuredCommand(message);
@@ -1327,13 +1351,13 @@ public class SpongeyBot {
 
 
 
-        if (message.getContent().equalsIgnoreCase("$update")) {
+     /*   if (message.getContent().equalsIgnoreCase("$update")) {
             try {
                 return betterUpdateCommand(objectMapper, httpClient, message, client);
             } catch (UnsupportedEncodingException e) {
                 throw new RuntimeException(e);
             }
-        }
+        }*/
 
 
         if (message.getContent().startsWith("$artisttime")) {
@@ -1346,7 +1370,7 @@ public class SpongeyBot {
 
         if (message.getContent().startsWith("$artisttracks")) {
             try {
-                return ArtistCommands.getArtistTracks(message, client);
+                return ArtistCommands.getArtistTracks(message, client, objectMapper, httpClient);
             } catch (JsonProcessingException e) {
                 throw new RuntimeException(e);
             }
@@ -1354,11 +1378,20 @@ public class SpongeyBot {
 
         if (message.getContent().startsWith("$trackinfo")) {
             try {
-                return TrackCommands.getTrackInfo(message, client);
+                return TrackCommands.getTrackInfo(message, client, objectMapper, httpClient);
             } catch (JsonProcessingException e) {
                 throw new RuntimeException(e);
             }
         }
+
+        if (message.getContent().startsWith("$fakefan")) {
+            try {
+                return TrackCommands.getFakeFan(message, client, objectMapper, httpClient);
+            } catch (JsonProcessingException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
 
         if (message.getContent().startsWith("$overview") || message.getContent().equals("$o") ) {
             try {
@@ -1432,28 +1465,24 @@ public class SpongeyBot {
         }
 
 
-        if (message.getContent().equalsIgnoreCase("$testingbetter")) {
-            return AdminCommands.testingbetterupdatecommand();
-        }
-
         if (message.getContent().equalsIgnoreCase("$testusername")) {
             return AdminCommands.testUsername(client);
         }
 
 
-    /*    if (message.getContent().equalsIgnoreCase("$betterupdaterecentcommand")) {
+       if (message.getContent().equalsIgnoreCase("$betterupdaterecentcommand")) {
             try {
-                return betterupdaterecentcommand(objectMapper, httpClient);
-            } catch (JsonProcessingException | UnsupportedEncodingException e) {
+                betterupdaterecentcommand(objectMapper, httpClient);
+            } catch (UnsupportedEncodingException e) {
                 throw new RuntimeException(e);
             }
-        }*/
+        }
 
         return Mono.empty();
 
     }
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws Exception {
 
 
             ObjectMapper objectMapper = new ObjectMapper();
@@ -1461,7 +1490,7 @@ public class SpongeyBot {
 
 
         //Update everyone's scrobbles every 5 minutes
-        ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
+       ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
         scheduler.scheduleAtFixedRate(() -> {
             try {
                 System.out.println("UPDATING EVERYONES SCROBBLES NOW");
@@ -1469,11 +1498,7 @@ public class SpongeyBot {
             } catch (Exception e) {
                 e.printStackTrace();
             }
-        }, 0, 5, TimeUnit.MINUTES);
-
-
-
-
+        }, 1, 5, TimeUnit.MINUTES);
 
 
 
@@ -1507,8 +1532,6 @@ public class SpongeyBot {
                             .flatMap(event -> {
                                 try {
                                     return UserScrobbleCommands.handleButtonInteraction(event);
-                                } catch (JsonProcessingException e) {
-                                    throw new RuntimeException(e);
                                 } catch (Exception e) {
                                     throw new RuntimeException(e);
                                 }

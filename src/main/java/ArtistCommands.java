@@ -31,7 +31,12 @@ public class ArtistCommands {
 
     private static int currentPage = 1;
 
+    private static int currentPageArtistTracks = 1;
+
+
     static String connectionString = System.getenv("CONNECTION_STRING");
+
+    private static final MongoClient mongoClient = MongoClients.create(connectionString);
 
     private static final String BASE_URL = "http://ws.audioscrobbler.com/2.0/";
 
@@ -82,8 +87,8 @@ public class ArtistCommands {
             artistName = Service.getUserCurrentTrackArtistName(objectMapper, httpClient, message);
         }
 
+        currentPage = 1;
 
-        MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
         MongoCollection<Document> scrobbles = database.getCollection(username);
 
@@ -93,7 +98,6 @@ public class ArtistCommands {
 
         String oldname = artistName.replace("+", " ");
         EmbedCreateSpec.Builder embedBuilder = Service.createEmbed(oldname + " tracks " + username + " has not listened to yet ");
-        embedBuilder.footer("Tracks not including songs artist has featured on/appears on", "https://i.imgur.com/F9BhEoz.png");
 
         Set<String> allArtistsTracks = SpotifyService.getArtistsTracksAll(spotifyAccessToken, artistSpotifyId);
 
@@ -131,6 +135,7 @@ public class ArtistCommands {
         }
 
 
+        embedBuilder.footer("Tracks not including songs artist has featured on/appears on.\n" + tracksNotListenedTo.size() + " tracks not listened to", "https://i.imgur.com/F9BhEoz.png");
 
 
        System.out.println("THese are tracks u haevnt listned to: " + tracksNotListenedTo);
@@ -177,6 +182,13 @@ public class ArtistCommands {
          String authorUrl = existingAuthor != null ? existingAuthor.getUrl().orElse(null) : null;
          String authorIconUrl = existingAuthor != null ? existingAuthor.getIconUrl().orElse(null) : null;
 
+
+      //   embedBuilder.footer("Tracks not including songs artist has featured on/appears on", "https://i.imgur.com/F9BhEoz.png");
+
+
+         Embed.Footer existingFooter = oldEmbed.getFooter().get();
+         String footerText = existingFooter.getText();
+         String footerURL = existingFooter.getIconUrl().get();
          System.out.println("THIS IS COMPONENT: " + message.getComponents().get(0));
          ActionRow editableActionRow = (ActionRow) message.getComponents().get(0);
          Button editablePrev = (Button) editableActionRow.getChildren().get(0);
@@ -217,7 +229,6 @@ public class ArtistCommands {
              tracksNotListenedTo = tracksNotListenedToCache.get(expectedKey);
          } else {
              System.out.println("Not in the cache for artist: " + artistName.trim());
-             MongoClient mongoClient = MongoClients.create(connectionString);
              MongoDatabase database = mongoClient.getDatabase("spongeybot");
 
              MongoCollection<Document> scrobbles = database.getCollection(username);
@@ -232,10 +243,10 @@ public class ArtistCommands {
 
 
          embedBuilder.color(oldEmbed.getColor().get())
-                 .author(EmbedCreateFields.Author.of(authorName, authorUrl, authorIconUrl));
+                 .author(EmbedCreateFields.Author.of(authorName, authorUrl, authorIconUrl)).footer(footerText, footerURL);
 
 
-         int startIndex = currentPage * 10;
+         int startIndex = (currentPage - 1) * 10;
          int endIndex = Math.min(startIndex + 10, tracksNotListenedTo.size());
 
 
@@ -263,19 +274,19 @@ public class ArtistCommands {
          }
 
          System.out.println("This is counter size: " + counter + " and this is list size: " + tracksNotListenedTo.size());
-         if (counter == tracksNotListenedTo.size()) {
+         if (startIndex == 0) {
+             System.out.println("start index is 0");
+             editablePrev = editablePrev.disabled(true);
+             editableNext = editableNext.disabled(false);
+         } else if (counter == tracksNotListenedTo.size()) {
              System.out.println("WE are displaying the last item on the list currently.");
                 editableNext = editableNext.disabled(true);
                 editablePrev = editablePrev.disabled(false);
-         }  if (startIndex == 0) {
-             System.out.println("start index is 0");
-             editablePrev = editablePrev.disabled();
-             editableNext = editableNext.disabled(false);
-         } if (counter < tracksNotListenedTo.size()) {
+         } else if (counter < tracksNotListenedTo.size()) {
              System.out.println("counter smaller than tracksnotlistened size");
              editableNext = editableNext.disabled(false);
+             editablePrev = editablePrev.disabled(false);
          }
-
          else {
              System.out.println("in the else");
              editablePrev = editablePrev.disabled(false);
@@ -304,7 +315,6 @@ public class ArtistCommands {
         Map<String, Integer> unsortedWk = new HashMap<>();
 
 
-        MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
         MongoCollection<Document> users = database.getCollection("users");
         MongoCollection<Document> artists = database.getCollection("artists");
@@ -382,16 +392,24 @@ public class ArtistCommands {
 
             long userId = document.getLong("userid");
 
+
+
             String username = client.getUserById(Snowflake.of(userId))
                     .block()
                     .getUsername();
+
+            String lastfmUsername = document.getString("lastfmUsername");
+
+            String lastFmProfile ="https://www.last.fm/user/" + lastfmUsername;
+            String hyperlinkText = "**[" + username + "](" + lastFmProfile + ")**";
+
 
             MongoCollection<Document> userScrobblesCollection = database.getCollection(username);
 
             userArtistCount = (int) userScrobblesCollection.countDocuments(filter);
 
             if (userArtistCount != 0) {
-                unsortedWk.put(username, userArtistCount);
+                unsortedWk.put(hyperlinkText, userArtistCount);
 
             }
 
@@ -408,13 +426,12 @@ public class ArtistCommands {
             Iterator<Map.Entry<String, Integer>> iterator = list.iterator();
             while (iterator.hasNext()) {
                 Map.Entry<String, Integer> entry = iterator.next();
-                String lastFmUserURL = "https://www.last.fm/user/" + "spongeystar16";
                 if (!iterator.hasNext()) {
-                    wkString.append("\uD83D\uDDD1  ").append("**" + "[").append(entry.getKey()).append("](").append(lastFmUserURL).append(")").append(" - ").append(entry.getValue()).append("** plays \n");
+                    wkString.append("\uD83D\uDDD1  ").append(entry.getKey()).append(" - ").append(entry.getValue()).append(" plays \n");
                 } else if (count == 1) {
-                    wkString.append("\uD83D\uDC51  ").append("**" + "[").append(entry.getKey()).append("](").append(lastFmUserURL).append(")").append(" - ").append(entry.getValue()).append("** plays \n");
+                    wkString.append("\uD83D\uDC51  ").append(entry.getKey()).append(" - ").append(entry.getValue()).append(" plays \n");
                 } else {
-                    wkString.append(count).append(".   ").append("**  " + "[").append(entry.getKey()).append("](").append(lastFmUserURL).append(")").append(" - ").append(entry.getValue()).append("** plays \n");
+                    wkString.append(count).append(".   ").append(entry.getKey()).append(" - ").append(entry.getValue()).append(" plays \n");
                 }
 
                 count++;
@@ -428,7 +445,7 @@ public class ArtistCommands {
             embedBuilder.addField("",  wkString.toString(), false);
 
 
-            embedBuilder.addField("", CrownsCommands.claimCrown(message, client, mongoClient, database, artistName.replace("+", " "), owner, ownerPlays), false);
+            embedBuilder.addField("", CrownsCommands.claimCrown(database, artistName.replace("+", " "), owner, ownerPlays), false);
 
 
 
@@ -440,7 +457,118 @@ public class ArtistCommands {
     }
 
 
-    static Mono<?> getArtistTracks(Message message, GatewayDiscordClient client) throws JsonProcessingException {
+    static void handleArtistTracksButtonClick(Message message, Embed oldEmbed, boolean next) {
+
+        if (next) {
+            currentPageArtistTracks++;
+        } else {
+            currentPageArtistTracks--;
+        }
+
+
+        EmbedCreateSpec.Builder embedBuilder = EmbedCreateSpec.builder();
+        Embed.Author existingAuthor = oldEmbed.getAuthor().orElse(null);
+        String authorName = existingAuthor != null ? existingAuthor.getName().orElse(null) : null;
+        String authorUrl = existingAuthor != null ? existingAuthor.getUrl().orElse(null) : null;
+        String authorIconUrl = existingAuthor != null ? existingAuthor.getIconUrl().orElse(null) : null;
+
+
+
+        embedBuilder.color(oldEmbed.getColor().get())
+                .author(EmbedCreateFields.Author.of(authorName, authorUrl, authorIconUrl));
+
+
+
+        ActionRow editableActionRow = (ActionRow) message.getComponents().get(0);
+        Button editablePrev = (Button) editableActionRow.getChildren().get(0);
+        Button editableNext = (Button) editableActionRow.getChildren().get(1);
+
+        String[] title = authorName.split(" ");
+
+        String username = title[0];
+
+
+        int indexOfFor = authorName.toLowerCase().indexOf("for");
+        String artist = authorName.substring(indexOfFor + "for".length()).trim();
+
+
+
+
+        MongoDatabase database = mongoClient.getDatabase("spongeybot");
+        MongoCollection<Document> collection = database.getCollection(username);
+        Bson filter = Filters.eq("artist", artist);
+
+        Map<String, Integer> artistTracks = Service.getUsersArtistTracks(collection, filter);
+
+        List<Map.Entry<String, Integer>> entryListArtistTracks = new ArrayList<>(artistTracks.entrySet());
+        entryListArtistTracks.sort(Map.Entry.<String, Integer>comparingByValue().reversed());
+
+
+        ArrayList<Map.Entry<String, Integer>> userArtistTracks = new ArrayList<>(artistTracks.entrySet());
+
+
+        Collections.sort(userArtistTracks, Map.Entry.<String, Integer>comparingByValue().reversed());
+
+
+
+        int startIndex = (currentPageArtistTracks - 1) * 10;
+        int endIndex = Math.min(startIndex + 10, userArtistTracks.size());
+
+
+        System.out.println("This is start index: " + startIndex);
+        System.out.println("This is end index: " + endIndex);
+
+        if (startIndex > endIndex) {
+            System.out.println("index too big");
+            message.edit().withEmbeds(embedBuilder.build()).subscribe();
+        }
+
+        List<Map.Entry<String, Integer>> currentUserArtistTracks = userArtistTracks.subList(startIndex, endIndex);
+
+
+        StringBuilder fieldToSave = new StringBuilder();
+
+
+        int counter = startIndex;
+        for (Map.Entry<String, Integer> artistTrack : currentUserArtistTracks) {
+            fieldToSave.append(counter).append(". ").append(artistTrack.getKey()).append(": ").append(artistTrack.getValue()).append(" scrobbles \n");
+            counter += 1;
+        }
+
+
+        System.out.println("This is counter size: " + counter + " and this is list size: " + userArtistTracks.size());
+        if (startIndex == 0) {
+            System.out.println("start index is 0");
+            editablePrev = editablePrev.disabled(true);
+            editableNext = editableNext.disabled(false);
+        } else if (counter == userArtistTracks.size()) {
+            System.out.println("WE are displaying the last item on the list currently.");
+            editableNext = editableNext.disabled(true);
+            editablePrev = editablePrev.disabled(false);
+        } else if (counter < userArtistTracks.size()) {
+            System.out.println("counter smaller than tracksnotlistened size");
+            editableNext = editableNext.disabled(false);
+            editablePrev = editablePrev.disabled(false);
+        }
+        else {
+            System.out.println("in the else");
+            editablePrev = editablePrev.disabled(false);
+        }
+
+
+        embedBuilder.addField("", fieldToSave.toString(), false);
+
+        ActionRow newActionRow = ActionRow.of(editablePrev, editableNext);
+        message.edit().withEmbeds(embedBuilder.build()).withComponents(newActionRow).subscribe();
+
+
+    }
+
+
+
+
+
+    static Mono<?> getArtistTracks(Message message, GatewayDiscordClient client, ObjectMapper objectMapper, CloseableHttpClient httpClient) throws JsonProcessingException {
         String[] command = message.getContent().split(" ");
 
         String artist;
@@ -464,13 +592,12 @@ public class ArtistCommands {
 
 
         } else {
-            return message.getChannel().flatMap(channel -> channel.createMessage("currently can only do $at artist, will do $at for current artist later"));
-
+            artist = Service.getUserCurrentTrackArtistName(objectMapper, httpClient, message);
         }
 
 
 
-        System.out.println("artist: " + artist);
+        System.out.println("This is the artist: " + artist);
 
 
 
@@ -483,48 +610,64 @@ public class ArtistCommands {
 
         }
 
-        MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
         MongoCollection<Document> collection = database.getCollection(username);
-        EmbedCreateSpec.Builder embedBuilder = Service.createEmbed(username  + "'s tracks for " + artist);
+        EmbedCreateSpec.Builder embedBuilder = Service.createEmbed(username  + " tracks for " + artist);
         Bson filter = Filters.eq("artist", artist);
 //todo put back case sensitiveif required czuz it counted sum youtube vid
 
-        Map<String, Integer> artistTracks = new HashMap<>();
-
-
-        for (Document doc : collection.find(filter)) {
-            int currentCount = artistTracks.getOrDefault(doc.getString("track"), 0);
-          //  System.out.println("THIS IS DOC: " + doc);
-            artistTracks.put(doc.getString("track"), currentCount + 1);
-        }
-
-
+        Map<String, Integer> artistTracks = Service.getUsersArtistTracks(collection, filter);
 
         List<Map.Entry<String, Integer>> entryListArtistTracks = new ArrayList<>(artistTracks.entrySet());
         entryListArtistTracks.sort(Map.Entry.<String, Integer>comparingByValue().reversed());
 
-        int count = 1;
-        StringBuilder artistTracksAll = new StringBuilder();
-        for (Map.Entry<String, Integer> entry : entryListArtistTracks) {
-            artistTracksAll.append(count).append(". ").append(entry.getKey()).append(": ").append(entry.getValue()).append("\n");
 
-            count++;
-            if (count > 10) {
-                break;
+        currentPageArtistTracks = 1;
+
+
+        if (currentPageArtistTracks == 1) {
+            int endIndex = Math.min(10, entryListArtistTracks.size());
+            List<Map.Entry<String, Integer>> currentArtistTracks = entryListArtistTracks.subList(0, endIndex);
+
+
+            StringBuilder fieldToSave = new StringBuilder();
+
+
+            int counter = 1;
+            for (Map.Entry<String, Integer> artistTrack : currentArtistTracks) {
+                fieldToSave.append(counter).append(". ").append(artistTrack.getKey()).append(": ").append(artistTrack.getValue()).append("\n");
+
+                counter += 1;
             }
 
+            embedBuilder.addField("", fieldToSave.toString(), false);
 
         }
 
-        embedBuilder.addField("ur artist tracks", artistTracksAll.toString(), false);
-        System.out.println("These are artists tracks size: " + artistTracks );
+
+        System.out.println("These are artists tracks: " + artistTracks );
 
 
-        System.out.println("These are artists tracks size2: " + artistTracks.size() );
+        Button nextButton = Button.secondary("nextArtistTracks", "Next Page");
+        Button prevButton = Button.secondary("prevArtistTracks", "Prev Page").disabled();
+
+        if (artistTracks.size() < 10) {
+            nextButton = nextButton.disabled(true);
+        }
 
 
-        return message.getChannel().flatMap(channel -> channel.createMessage(embedBuilder.build()));
+
+        ActionRow actionRow = ActionRow.of(prevButton, nextButton);
+
+
+        MessageCreateSpec messageCreateSpec = MessageCreateSpec.builder()
+                .addEmbed(embedBuilder.build())
+                .addComponent(actionRow)
+                .build();
+
+
+
+        return message.getChannel().flatMap(channel -> channel.createMessage(messageCreateSpec));
 
     }
 
@@ -572,7 +715,6 @@ public class ArtistCommands {
 
         }
 
-        MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
         MongoCollection<Document> collection = database.getCollection(username);
         MongoCollection<Document> artists = database.getCollection("artists");
@@ -648,7 +790,6 @@ public class ArtistCommands {
         }
 
 
-        MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
         MongoCollection<Document> artists = database.getCollection("artists");
 
@@ -665,7 +806,6 @@ public class ArtistCommands {
 
             JsonNode rootNode1 = Service.getJsonNodeFromUrl(objectMapper, artistInfoUrl, httpClient);
             JsonNode artistSummaryNode = rootNode1.path("artist").path("bio").path("summary");
-            System.out.println("This is artistsumarynode " +  artistSummaryNode);
             artistSummary = artistSummaryNode.asText();
 
         }
@@ -707,9 +847,12 @@ public class ArtistCommands {
 
         embedBuilder.thumbnail(artistImageUrl);
 
+        List<String> firstTimeAndTrack = Service.getFirstTimeAndTrackListeningToArtist(artistName, username);
+
         embedBuilder.addField("Summary: ", artistSummary, true);
         embedBuilder.addField(username + "'s total plays: ", authorsArtistPlays + " plays", false);
-        embedBuilder.addField("First time listened: ", Service.getFirstTimeListeningToArtist(artistName, username), false);
+        embedBuilder.addField("First time listened: ", firstTimeAndTrack.get(0), false);
+        embedBuilder.addField("First track listened: ", firstTimeAndTrack.get(1), false);
         embedBuilder.addField("Tracks played: ", "You have listened to " + (allArtistsTracks.size() - tracksNotListenedTo.size()) + " out of " + numArtistTracks + " of " + artistName + "'s tracks", false);
         embedBuilder.footer("Tracks not including songs artist has featured on/appears on", "https://i.imgur.com/F9BhEoz.png");
 

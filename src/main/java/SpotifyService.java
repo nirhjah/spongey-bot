@@ -136,6 +136,96 @@ public class SpotifyService {
         }
     }
 
+
+    public static String getTrackArtist(String trackId, String accessToken) throws IOException {
+        String apiUrl = "https://api.spotify.com/v1/tracks/" + trackId;
+        //   System.out.println("This is track url: " + apiUrl);
+        URL url = new URL(apiUrl);
+        HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+        connection.setRequestMethod("GET");
+        connection.setRequestProperty("Authorization", "Bearer " + accessToken);
+
+        BufferedReader in = new BufferedReader(new InputStreamReader(connection.getInputStream()));
+        String inputLine;
+        StringBuilder response = new StringBuilder();
+
+        while ((inputLine = in.readLine()) != null) {
+            response.append(inputLine);
+        }
+        in.close();
+
+        ObjectMapper objectMapper = new ObjectMapper();
+        JsonNode jsonResponse = objectMapper.readTree(response.toString());
+
+        //  System.out.println("This is new artists: " + jsonResponse.get("artists").get(0).get("name"));
+        int trackDuration = jsonResponse.get("duration_ms").asInt();
+
+        return jsonResponse.get("artists").get(0).get("name").asText();
+    }
+
+
+
+
+    public static int getTrackDuration(String trackId, String accessToken) throws IOException {
+        String apiUrl = "https://api.spotify.com/v1/tracks/" + trackId;
+     //   System.out.println("This is track url: " + apiUrl);
+        URL url = new URL(apiUrl);
+        HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+        connection.setRequestMethod("GET");
+        connection.setRequestProperty("Authorization", "Bearer " + accessToken);
+
+        int retryAfter = connection.getHeaderFieldInt("Retry-After", -1);
+
+        System.out.println("THIS IS RETRY AFTER: " + retryAfter);
+        BufferedReader in = new BufferedReader(new InputStreamReader(connection.getInputStream()));
+        String inputLine;
+        StringBuilder response = new StringBuilder();
+
+        while ((inputLine = in.readLine()) != null) {
+            response.append(inputLine);
+        }
+        in.close();
+
+        ObjectMapper objectMapper = new ObjectMapper();
+        JsonNode jsonResponse = objectMapper.readTree(response.toString());
+
+      //  System.out.println("This is new artists: " + jsonResponse.get("artists").get(0).get("name"));
+        int trackDuration = jsonResponse.get("duration_ms").asInt();
+
+        return trackDuration;
+    }
+
+    public static String getTrackSpotifyId(String accessToken, String trackName) throws IOException {
+        String encodedTrackName = URLEncoder.encode(trackName, "UTF-8");
+
+        String apiUrl = "https://api.spotify.com/v1/search?q=" + encodedTrackName + "&type=track";
+        URL url = new URL(apiUrl);
+        HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+        connection.setRequestMethod("GET");
+
+        connection.setRequestProperty("Authorization", "Bearer " + accessToken);
+
+        try (BufferedReader in = new BufferedReader(new InputStreamReader(connection.getInputStream()))) {
+            String inputLine;
+            StringBuilder response = new StringBuilder();
+
+            while ((inputLine = in.readLine()) != null) {
+                response.append(inputLine);
+            }
+
+
+            ObjectMapper objectMapper = new ObjectMapper();
+            JsonNode jsonResponse = objectMapper.readTree(response.toString());
+
+            JsonNode tracks = jsonResponse.path("tracks").path("items");
+            if (tracks.isArray() && tracks.size() > 0) {
+                return tracks.get(0).path("id").asText();
+            } else {
+                return null;
+            }
+        }
+    }
+
     public static String getArtistSpotifyId(String accessToken, String artistName) throws IOException {
         String encodedArtistName = URLEncoder.encode(artistName, "UTF-8");
 

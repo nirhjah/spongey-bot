@@ -7,8 +7,13 @@ import com.mongodb.client.model.Filters;
 import com.mongodb.client.model.Updates;
 import discord4j.common.util.Snowflake;
 import discord4j.core.GatewayDiscordClient;
+import discord4j.core.object.Embed;
+import discord4j.core.object.component.ActionRow;
+import discord4j.core.object.component.Button;
 import discord4j.core.object.entity.Message;
+import discord4j.core.spec.EmbedCreateFields;
 import discord4j.core.spec.EmbedCreateSpec;
+import discord4j.core.spec.MessageCreateSpec;
 import org.bson.Document;
 import org.bson.conversions.Bson;
 import reactor.core.publisher.Mono;
@@ -17,18 +22,21 @@ import java.time.LocalDateTime;
 import java.util.*;
 
 public class CrownsCommands {
-
     static String connectionString = System.getenv("CONNECTION_STRING");
 
-    static String claimCrown(Message message, GatewayDiscordClient client, MongoClient mongoClient, MongoDatabase mongoDatabase, String artist, String user, int ownerPlays) throws JsonProcessingException {
+
+    private static final MongoClient mongoClient = MongoClients.create(connectionString);
+
+
+    private static int currentPage = 1;
+
+
+    static String claimCrown(MongoDatabase mongoDatabase, String artist, String user, int ownerPlays) {
         MongoCollection<Document> crownsCollection = mongoDatabase.getCollection("crowns");
         Bson artistFilter = Filters.regex("artist", artist, "i");
 
         String crownClaimedString = "";
 
-      /*  String username = client.getUserById(Snowflake.of(userId))
-                .block()
-                .getUsername();*/
 
         if (crownsCollection.countDocuments(artistFilter) == 0) {
             //create new crown object doc
@@ -95,7 +103,6 @@ public class CrownsCommands {
 
         EmbedCreateSpec.Builder embedBuilder = Service.createEmbed("Crowns " + username + " is close to getting");
 
-        MongoClient mongoClient = MongoClients.create(connectionString);
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
         MongoCollection<Document> crowns = database.getCollection("crowns");
         Map<String, Integer> crownsClose = new HashMap<>(); //artist, scrobbles away from crown
@@ -134,36 +141,138 @@ public class CrownsCommands {
 
     }
 
-    static Mono<?> getCrowns(Message message, GatewayDiscordClient client) throws JsonProcessingException {
-        long userid = message.getAuthor().get().getId().asLong();
 
-        String username = client.getUserById(Snowflake.of(userid))
-                .block()
-                .getUsername();
+    static void handleCrownsButtonClick(Message message, Embed oldEmbed, boolean next) {
 
-
-        if (!message.getUserMentions().isEmpty()) {
-            username = message.getUserMentions().get(0).getUsername();
-            userid = message.getUserMentions().get(0).getId().asLong();
+        if (next) {
+            currentPage++;
+        } else {
+            currentPage--;
         }
 
 
-        MongoClient mongoClient = MongoClients.create(connectionString);
+        EmbedCreateSpec.Builder embedBuilder = EmbedCreateSpec.builder();
+        Embed.Author existingAuthor = oldEmbed.getAuthor().orElse(null);
+        String authorName = existingAuthor != null ? existingAuthor.getName().orElse(null) : null;
+        String authorUrl = existingAuthor != null ? existingAuthor.getUrl().orElse(null) : null;
+        String authorIconUrl = existingAuthor != null ? existingAuthor.getIconUrl().orElse(null) : null;
+
+        Embed.Footer existingFooter = oldEmbed.getFooter().get();
+        String footerText = existingFooter.getText();
+        String footerURL = existingFooter.getIconUrl().get();
+
+        embedBuilder.color(oldEmbed.getColor().get())
+                .author(EmbedCreateFields.Author.of(authorName, authorUrl, authorIconUrl)).footer(footerText, footerURL);
+
+
+
+        ActionRow editableActionRow = (ActionRow) message.getComponents().get(0);
+        Button editablePrev = (Button) editableActionRow.getChildren().get(0);
+        Button editableNext = (Button) editableActionRow.getChildren().get(1);
+
+        String[] title = authorName.split(" ");
+
+        String username = title[0];
+
+
+
         MongoDatabase database = mongoClient.getDatabase("spongeybot");
-        MongoCollection<Document> crowns = database.getCollection("crowns");
+        MongoCollection<Document> allCrowns = database.getCollection("crowns");
         Bson filter = Filters.all("owner", username);
 
-        EmbedCreateSpec.Builder embedBuilder = Service.createEmbed(username + "'s crowns");
-        Map<String, Integer> crownMap = new HashMap<>(); //owner, total crowns
+        Map<String, Integer> crownMap = Service.getUsersCrowns(allCrowns, filter);
 
-        int totalCrowns = 0;
-        for (Document crown : crowns.find(filter)) {
-            totalCrowns += 1;
-            crownMap.put(crown.getString("artist"), crown.getInteger("ownerPlays"));
+        ArrayList<Map.Entry<String, Integer>> crowns = new ArrayList<>(crownMap.entrySet());
+
+
+        Collections.sort(crowns, Map.Entry.<String, Integer>comparingByValue().reversed());
+
+
+
+        int startIndex = (currentPage - 1) * 10;
+        int endIndex = Math.min(startIndex + 10, crowns.size());
+
+
+        System.out.println("This is start index: " + startIndex);
+        System.out.println("This is end index: " + endIndex);
+
+        if (startIndex > endIndex) {
+            System.out.println("index too big");
+            message.edit().withEmbeds(embedBuilder.build()).subscribe();
         }
+
+        List<Map.Entry<String, Integer>> currentCrowns = crowns.subList(startIndex, endIndex);
+
+
+        StringBuilder fieldToSave = new StringBuilder();
+
+
+        int counter = startIndex;
+        for (Map.Entry<String, Integer> crown : currentCrowns) {
+            fieldToSave.append(counter).append(". ").append(crown.getKey()).append(": ").append(crown.getValue()).append(" scrobbles \n");
+            counter += 1;
+        }
+
+
+        System.out.println("This is counter size: " + counter + " and this is list size: " + crowns.size());
+        if (startIndex == 0) {
+            System.out.println("start index is 0");
+            editablePrev = editablePrev.disabled(true);
+            editableNext = editableNext.disabled(false);
+        } else if (counter == crowns.size()) {
+            System.out.println("WE are displaying the last item on the list currently.");
+            editableNext = editableNext.disabled(true);
+            editablePrev = editablePrev.disabled(false);
+        } else if (counter < crowns.size()) {
+            System.out.println("counter smaller than tracksnotlistened size");
+            editableNext = editableNext.disabled(false);
+            editablePrev = editablePrev.disabled(false);
+        }
+        else {
+            System.out.println("in the else");
+            editablePrev = editablePrev.disabled(false);
+        }
+
+
+        embedBuilder.addField("", fieldToSave.toString(), false);
+
+        ActionRow newActionRow = ActionRow.of(editablePrev, editableNext);
+        message.edit().withEmbeds(embedBuilder.build()).withComponents(newActionRow).subscribe();
+
+
+    }
+
+        static Mono<?> getCrowns(Message message, GatewayDiscordClient client) throws JsonProcessingException {
+            long userid = message.getAuthor().get().getId().asLong();
+
+            String username = client.getUserById(Snowflake.of(userid))
+                    .block()
+                    .getUsername();
+
+
+            if (!message.getUserMentions().isEmpty()) {
+                username = message.getUserMentions().get(0).getUsername();
+                userid = message.getUserMentions().get(0).getId().asLong();
+            }
+
+            currentPage = 1;
+
+
+            MongoDatabase database = mongoClient.getDatabase("spongeybot");
+            MongoCollection<Document> crowns = database.getCollection("crowns");
+            Bson filter = Filters.all("owner", username);
+
+            EmbedCreateSpec.Builder embedBuilder = Service.createEmbed(username + " crowns");
+            Map<String, Integer> crownMap; //owner, total crowns
+
+
+            crownMap = Service.getUsersCrowns(crowns, filter);
+
 
         List<Map.Entry<String, Integer>> listOfCrowns = new ArrayList<>(crownMap.entrySet());
         Collections.sort(listOfCrowns, Map.Entry.<String, Integer>comparingByValue().reversed());
+
+        System.out.println("List of crowns: " + listOfCrowns);
 
         int count = 1;
         StringBuilder crownsString = new StringBuilder();
@@ -172,15 +281,58 @@ public class CrownsCommands {
             count++;
         }
 
-        embedBuilder.addField("", crownsString.toString(), false);
+       // embedBuilder.addField("", crownsString.toString(), false);
 
-        embedBuilder.footer(totalCrowns + " total crowns", "https://i.imgur.com/F9BhEoz.png");
+
+
+
+            if (currentPage == 1) {
+                int endIndex = Math.min(10, listOfCrowns.size());
+                List<Map.Entry<String, Integer>> currentCrowns = listOfCrowns.subList(0, endIndex);
+
+
+                StringBuilder fieldToSave = new StringBuilder();
+
+
+                int counter = 1;
+                for (Map.Entry<String, Integer> crown : currentCrowns) {
+                    fieldToSave.append(counter).append(". ").append(crown.getKey()).append(": ").append(crown.getValue()).append(" scrobbles \n");
+                    counter += 1;
+                }
+
+                embedBuilder.addField("", fieldToSave.toString(), false);
+
+            }
+
+
+
+
+
+
+        embedBuilder.footer(crownMap.size() + " total crowns", "https://i.imgur.com/F9BhEoz.png");
 
         embedBuilder.thumbnail(client.getUserById(Snowflake.of(userid))
                 .block()
                 .getAvatarUrl());
 
-        return message.getChannel().flatMap(channel -> channel.createMessage(embedBuilder.build()));
+        Button nextButton = Button.secondary("nextCrowns", "Next Page");
+        Button prevButton = Button.secondary("prevCrowns", "Prev Page").disabled();
+
+
+            if (listOfCrowns.size() < 10) {
+                nextButton = nextButton.disabled(true);
+            }
+
+        ActionRow actionRow = ActionRow.of(prevButton, nextButton);
+
+
+        MessageCreateSpec messageCreateSpec = MessageCreateSpec.builder()
+                    .addEmbed(embedBuilder.build())
+                    .addComponent(actionRow)
+                    .build();
+
+        return message.getChannel().flatMap(channel -> channel.createMessage(messageCreateSpec));
+
 
 
     }
